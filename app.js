@@ -105,15 +105,25 @@ function addStreet(h) {
     const d = DIST.find(x => x[0] === id); if (d && !S.districts.some(x => x[0] === id)) S.districts.push(d);
   }
 }
-let openLimit = 24;
-/** Streets of the opened district: «X (همه)» groups first, then single streets (short names first). */
+let openLimit = 12;
+const startsWithDigit = s => /^[0-9۰-۹]/.test(s);
+const natural = (a, b) => (startsWithDigit(a) - startsWithDigit(b)) || a.localeCompare(b, 'fa', { numeric: true });
+const hasLetters = s => /[\u0600-\u06FFa-zA-Z]{2}/.test(s.replace(/[0-9۰-۹]/g, ''));
+/** Streets of the opened district in three sections: main streets (Divar's list + OSM main roads,
+ *  DIST[i][5] of them lead the list), alleys grouped by their street («رادفر (همه، ۱۲)»), other alleys. */
 function districtStreets(d) {
-  const groups = [...streetGroups().values()].filter(g => g.ids.has(d[0]))
-    .map(g => ({ name: g.name + '*', label: `${g.name} (همه)`, districtIds: [...g.ids] }));
-  const singles = streetParts(d[2]).sort((a, b) => a.length - b.length || a.localeCompare(b, 'fa'))
-    .map(st => ({ name: st, label: st, districtIds: [d[0]] }));
+  const all = streetParts(d[2]).filter(hasLetters), nMain = d[5] || 0;
   const taken = new Set(S.streets.map(s => norm(s.name)));
-  return [...groups, ...singles].filter(x => !taken.has(norm(x.name)));
+  const item = (name, label) => ({ name, label: label || name });
+  const groups = [...streetGroups().values()].filter(g => g.ids.has(d[0]));
+  const inGroup = new Set(groups.flatMap(g => [...g.members].map(norm)));
+  const main = all.slice(0, nMain).filter(st => !inGroup.has(norm(st)) || streetBase(st) === st).map(st => item(st));
+  const mainSet = new Set(main.map(x => norm(x.name)));
+  const grouped = groups.sort((a, b) => b.members.size - a.members.size || natural(a.name, b.name))
+    .map(g => item(g.name + '*', `${g.name} (همه، ${[...g.members].filter(m => streetParts(d[2]).includes(m)).length.toLocaleString('fa-IR')})`));
+  const others = all.slice(nMain).filter(st => !inGroup.has(norm(st)) && !mainSet.has(norm(st))).sort(natural).map(st => item(st));
+  const free = x => !taken.has(norm(x.name));
+  return [['خیابان‌های اصلی', main.filter(free)], ['کوچه‌ها به تفکیک خیابان', grouped.filter(free)], ['کوچه‌های دیگر', others.filter(free)]];
 }
 function drawSel() {
   const chips = [];
@@ -129,21 +139,24 @@ function drawSel() {
   const od = S.open && S.districts.find(d => d[0] === S.open);
   let panel = '';
   if (od) {
-    const all = districtStreets(od);
-    panel = `<div class="dstreets"><div class="muted">خیابان‌های ${esc(od[1])}:</div>`
-      + all.slice(0, openLimit).map((x, i) => `<button class="chip" data-st="${i}">${esc(x.label)}</button>`).join(' ')
-      + (all.length > openLimit ? ` <button class="chip" id="stmore">+ ${(all.length - openLimit).toLocaleString('fa-IR')} خیابان دیگر</button>` : '')
-      + (all.length ? '' : '<span class="muted">خیابانی ثبت نشده</span>') + '</div>';
+    const sections = districtStreets(od), flat = [];
+    panel = `<div class="dstreets"><div class="dsthead">${esc(od[1])}</div>` + sections.map(([title, list], k) => {
+      if (!list.length) return '';
+      const cut = k === 2 ? openLimit : list.length;  // only «other alleys» is collapsed
+      const chipsHtml = list.slice(0, cut).map(x => { flat.push(x); return `<button class="chip" data-st="${flat.length - 1}">${esc(x.label)}</button>`; }).join(' ');
+      const more = list.length > cut ? ` <button class="chip" id="stmore">+ ${(list.length - cut).toLocaleString('fa-IR')} کوچه‌ی دیگر</button>` : '';
+      return `<div class="dsec"><div class="muted">${title}</div>${chipsHtml}${more}</div>`;
+    }).join('') + (flat.length ? '' : '<span class="muted">خیابانی ثبت نشده</span>') + '</div>';
     setTimeout(() => {
       sel.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
-        const x = all[+b.dataset.st]; haptic();
+        const x = flat[+b.dataset.st]; haptic();
         addStreet({ name: x.name, district: od[1], districtId: od[0], districtIds: [od[0]] }); drawSel();  // stay in this district
       });
-      const more = document.getElementById('stmore'); if (more) more.onclick = () => { openLimit += 48; drawSel(); };
+      const more = document.getElementById('stmore'); if (more) more.onclick = () => { openLimit += 60; drawSel(); };
     });
   }
   sel.innerHTML = (n ? chips.join(' ') : '') + panel;
-  sel.querySelectorAll('[data-open]').forEach(b => b.onclick = () => { haptic(); S.open = S.open === +b.dataset.open ? null : +b.dataset.open; openLimit = 24; drawSel(); });
+  sel.querySelectorAll('[data-open]').forEach(b => b.onclick = () => { haptic(); S.open = S.open === +b.dataset.open ? null : +b.dataset.open; openLimit = 12; drawSel(); });
   sel.querySelectorAll('.chip.x, .chip .x').forEach(c => c.onclick = () => {
     if (c.dataset.kind === 'area') S.areas = S.areas.filter((_, i) => i !== +c.dataset.i);
     else if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
@@ -194,7 +207,7 @@ function suggest(q) {
     } else {
       const d = DIST.find(x => x[0] === h.districtId);
       if (d && !S.districts.some(x => x[0] === d[0])) S.districts.push(d);
-      if (d) { S.open = d[0]; openLimit = 24; }  // show its streets right away
+      if (d) { S.open = d[0]; openLimit = 12; }  // show its streets right away
       toast(`✅ محله ${h.name}`, 1800);
     }
     drawSel(); suggest(dq.value);
@@ -280,7 +293,7 @@ async function Results(b64) {
       else { const u = `https://t.me/${BOT}?start=d_${c.dataset.id}`; tg ? (tg.openTelegramLink(u), setTimeout(() => tg.close(), 400)) : (location.href = u); }
     });
     $app.querySelectorAll('.card').forEach(c => c.onclick = () => { const u = 'https://divar.ir/v/' + c.dataset.t; tg ? tg.openLink(u) : window.open(u); });
-    btnNew.onclick = async () => { try { sessionStorage.removeItem('dy_data') } catch (e) { } history.replaceState(null, '', location.pathname); if (!DIST.length) { try { DIST = await (await fetch('districts.json?v=2')).json(); } catch (e) { } } Search(); };
+    btnNew.onclick = async () => { try { sessionStorage.removeItem('dy_data') } catch (e) { } history.replaceState(null, '', location.pathname); if (!DIST.length) { try { DIST = await (await fetch('districts.json?v=3')).json(); } catch (e) { } } Search(); };
   };
   draw();
 }
@@ -291,7 +304,7 @@ async function Results(b64) {
   const h = new URLSearchParams(location.hash.slice(1)), qs = new URLSearchParams(location.search);
   const data = h.get('data') || qs.get('data') || (sessionStorage.getItem('dy_data') || '');
   if (data) { try { sessionStorage.setItem('dy_data', data) } catch (e) { } return Results(data); }
-  try { DIST = await (await fetch('districts.json?v=2')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
+  try { DIST = await (await fetch('districts.json?v=3')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
   try { const d = JSON.parse(localStorage.getItem('dy_draft') || 'null'); if (d) { Object.assign(S, d); localStorage.removeItem('dy_draft'); } } catch (e) { }
   Search();
 })();
