@@ -61,7 +61,7 @@ function seg(key, opts) {
 function Search() {
   const types = { any: 'همه', apartment: '🏢 آپارتمان', villa: '🏡 ویلا/خانه', land: '🌱 زمین/کلنگی', commercial: '🏬 تجاری/اداری', building: '🏗 ساختمان کامل' };
   const priceLbl = S.deal === 'sell' ? 'قیمت (تومان)' : 'ودیعه (تومان)';
-  $app.innerHTML = `<div class="hdr"><h1>🔎 جستجوی آگهی ملک</h1></div>
+  $app.innerHTML = `<div class="hdr"><h1>${S.editOf ? `✏️ ویرایش کار #${fa(S.editOf)}` : '🔎 جستجوی آگهی ملک'}</h1></div>
   <div class="sec"><h3>نوع معامله</h3>${seg('deal', { sell: '🏷 فروش', rent: '🔑 اجاره', mortgage: '💰 رهن' })}</div>
   <div class="sec"><h3>نوع ملک</h3>${seg('ptype', types)}</div>
   <div class="sec"><h3>محله / خیابان</h3>
@@ -222,6 +222,7 @@ function submit(mode) {
   for (const k of ['min_price', 'max_price', 'min_area', 'max_area']) if (S[k]) q[k] = S[k];
   if (S.areas.length) q.areas = S.areas;
   if (S.window === 'custom' && S.range) { q.from = S.range.from; q.to = S.range.to; }
+  if (S.editOf) q.edit = S.editOf;  // the bot stops the old job and starts this one
   if (link) { q.url = link; q.a = 'live'; }
   send(q, mode);
 }
@@ -230,7 +231,7 @@ const DEAL_C = { sell: 's', rent: 'r', mortgage: 'm' }, TYPE_C = { any: 'x', apa
 function startCode(q) {
   if (q.a === 'jobs') return 'jobs'; if (q.a === 'help') return 'help';
   if (q.url) return null;
-  if ((q.streets && q.streets.length) || q.areas || q.from) return null; // the short link cannot carry them
+  if ((q.streets && q.streets.length) || q.areas || q.from || q.edit) return null; // the short link cannot carry them
   const m = v => v ? Math.round(v / 1e6).toString(36) : '', ar = v => v ? (+v).toString(36) : '';
   const code = 'q' + (q.a === 'live' ? 'L' : 'S') + DEAL_C[q.deal] + TYPE_C[q.ptype] + WIN_C[q.w] + q.p + REP_C[q.rep || 0] + '_' + q.d.map(i => i.toString(36)).join('-') + '_' + [m(q.min_price), m(q.max_price), ar(q.min_area), ar(q.max_area)].join('_');
   return code.length <= 64 ? code : null;
@@ -298,13 +299,32 @@ async function Results(b64) {
   draw();
 }
 
+/** Fill the form with a job's search (from the bot's «✏️ ویرایش» button). */
+function prefill(p) {
+  S.editOf = p.edit;
+  for (const k of ['deal', 'ptype', 'window', 'min_price', 'max_price', 'min_area', 'max_area']) if (p[k] != null) S[k] = p[k];
+  if (p.personal != null) S.personal = !!p.personal;
+  if (p.repeat != null) S.repeat = +p.repeat || 0;
+  if (p.range) { S.range = p.range; S.window = 'custom'; }
+  S.districts = (p.districts || []).map(id => DIST.find(d => d[0] === id)).filter(Boolean);
+  S.streets = (p.streets || []).map(name => {
+    const base = name.replace(/\*$/, ''), home = DIST.find(d => streetParts(d[2]).some(st => norm(st) === norm(base)));
+    return { name, district: home ? home[1] : '', districtId: home ? home[0] : null, districtIds: home ? [home[0]] : [] };
+  });
+  S.areas = p.areas || [];
+  if (p.url) S.editUrl = p.url;
+}
+
 // ---------------------------------------------------------------- boot
 (async function boot() {
   if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('secondary_bg_color') } catch (e) { } }
   const h = new URLSearchParams(location.hash.slice(1)), qs = new URLSearchParams(location.search);
-  const data = h.get('data') || qs.get('data') || (sessionStorage.getItem('dy_data') || '');
+  const data = h.get('data') || qs.get('data') || (h.get('edit') ? '' : sessionStorage.getItem('dy_data') || '');
   if (data) { try { sessionStorage.setItem('dy_data', data) } catch (e) { } return Results(data); }
   try { DIST = await (await fetch('districts.json?v=3')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
   try { const d = JSON.parse(localStorage.getItem('dy_draft') || 'null'); if (d) { Object.assign(S, d); localStorage.removeItem('dy_draft'); } } catch (e) { }
+  const edit = h.get('edit');
+  if (edit) { try { prefill(await inflate(edit)); } catch (e) { toast('اطلاعات کار برای ویرایش خوانا نبود'); } }
   Search();
+  if (S.editUrl) { const u = document.getElementById('url'); u.value = S.editUrl; u.closest('details').open = true; }
 })();
