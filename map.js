@@ -63,15 +63,47 @@ function areaDistricts(a) {
   const near = scored.filter(([g]) => g <= 0.3).map(([, d]) => d);
   return near.length ? near : scored.slice(0, 1).map(([, d]) => d);
 }
-function areaNames(a, max = 4) {
-  const names = areaDistricts(a).map(d => d[1]);
-  return names.slice(0, max).join('، ') + (names.length > max ? ` و ${(names.length - max).toLocaleString('fa-IR')} محله‌ی دیگر` : '');
+// Where streets run (streets_geo.json: [name, road rank 0-3, [(lat-29)*1e4, (lng-52)*1e4, ...]]), loaded with the map.
+let STREETS = null;
+async function loadStreets() {
+  if (STREETS) return STREETS;
+  try {
+    const raw = await (await fetch('streets_geo.json?v=2')).json();
+    STREETS = raw.map(([n, m, c]) => {
+      const pts = [];
+      for (let i = 0; i < c.length; i += 2) pts.push([29 + c[i] / 1e4, 52 + c[i + 1] / 1e4]);
+      return { n, m, pts };
+    });
+  } catch (e) { STREETS = []; }
+  return STREETS;
+}
+/** Streets running through an area, main roads first, then by how much of them lies inside. */
+function areaStreets(a, max = 3) {
+  if (!STREETS) return [];
+  const seen = new Set(), out = [];
+  const ranked = STREETS.filter(s => !/^[0-9۰-۹]/.test(s.n) && /[\u0600-\u06FF]{2}/.test(s.n)
+      && !/پیاده|کندرو|دسترسی|کنار ?گذر/.test(s.n))  // no alleys, footpaths, service roads, «N»/«O» ramps
+    .map(s => [s, s.pts.filter(p => kmOutside(p, a) === 0).length]).filter(([, k]) => k)
+    .sort((x, y) => (y[0].m - x[0].m) || (y[1] - x[1]));
+  for (const [s] of ranked) {
+    const k = skey(streetBase(s.n));  // «خیابان دانش آموز» = «دانش آموز»
+    if (!seen.has(k)) { seen.add(k); out.push(s.n); }
+    if (out.length >= max) break;
+  }
+  return out;
+}
+/** What users see for an area: its streets, then the district around it («بلوار چمران، ابیوردی · حوالی ملاصدرا»). */
+function areaNames(a, max = 3) {
+  if (a.n) return a.n;
+  const streets = areaStreets(a, max), districts = areaDistricts(a).map(d => d[1]);
+  if (!streets.length) return districts.slice(0, max).join('، ') + (districts.length > max ? ` و ${(districts.length - max).toLocaleString('fa-IR')} محله‌ی دیگر` : '');
+  return streets.join('، ') + (districts.length ? ` · حوالی ${districts.slice(0, 2).join('، ')}` : '');
 }
 
 /** Full-screen editor. areas: current list; done(list). */
 async function openAreaPicker(areas, done) {
-  try { await loadLeaflet(); } catch (e) { toast('نقشه بارگذاری نشد؛ اینترنت را بررسی کنید'); return; }
-  let list = areas.map(a => JSON.parse(JSON.stringify(a))), mode = 'circle', layers = [], picked = list.length - 1;
+  try { await Promise.all([loadLeaflet(), loadStreets()]); } catch (e) { toast('نقشه بارگذاری نشد؛ اینترنت را بررسی کنید'); return; }
+  let list = areas.map(a => { const b = JSON.parse(JSON.stringify(a)); delete b.n; return b; }), mode = 'circle', layers = [], picked = list.length - 1;
   const box = document.createElement('div');
   box.className = 'mapbox';
   box.innerHTML = `<div class="mapmodes"><button class="chip on" data-m="circle">⭕ دایره</button><button class="chip" data-m="draw">✏️ کشیدن با انگشت</button></div>
@@ -148,7 +180,7 @@ async function openAreaPicker(areas, done) {
   };
   const close = v => { map.remove(); box.remove(); done(v); };
   $('#mapno').onclick = () => close(areas);
-  $('#mapok').onclick = () => close(list);
+  $('#mapok').onclick = () => close(list.map(a => ({ ...a, n: areaNames(a) })));  // keep the name for chips and the bot
   redraw();
 }
 
