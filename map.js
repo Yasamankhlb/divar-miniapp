@@ -40,35 +40,70 @@ function simplify(pts) {
   return pts.filter((_, i) => i % step === 0).map(p => [+p.lat.toFixed(5), +p.lng.toFixed(5)]);
 }
 
+// ---- areas -> Divar district names (district map points are DIST[i][3], DIST[i][4])
+function kmBetween(a, b) {
+  const dy = (a[0] - b[0]) * 111, dx = (a[1] - b[1]) * 111 * Math.cos(a[0] * Math.PI / 180);
+  return Math.hypot(dx, dy);
+}
+function inPolygon(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [yi, xi] = poly[i], [yj, xj] = poly[j];
+    if ((yi > pt[0]) !== (yj > pt[0]) && pt[1] < (xj - xi) * (pt[0] - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function kmOutside(pt, a) {
+  if (a.c) return Math.max(0, kmBetween(pt, a.c) - a.c[2] / 1000);
+  return inPolygon(pt, a.p) ? 0 : Math.min(...a.p.map(v => kmBetween(pt, v)));
+}
+/** Districts an area covers: centers inside it (or within 300 m), else the nearest one. */
+function areaDistricts(a) {
+  const scored = (typeof DIST === 'undefined' ? [] : DIST).filter(d => d[3]).map(d => [kmOutside([d[3], d[4]], a), d]).sort((x, y) => x[0] - y[0]);
+  const near = scored.filter(([g]) => g <= 0.3).map(([, d]) => d);
+  return near.length ? near : scored.slice(0, 1).map(([, d]) => d);
+}
+function areaNames(a, max = 4) {
+  const names = areaDistricts(a).map(d => d[1]);
+  return names.slice(0, max).join('، ') + (names.length > max ? ` و ${(names.length - max).toLocaleString('fa-IR')} محله‌ی دیگر` : '');
+}
+
 /** Full-screen editor. areas: current list; done(list). */
 async function openAreaPicker(areas, done) {
   try { await loadLeaflet(); } catch (e) { toast('نقشه بارگذاری نشد؛ اینترنت را بررسی کنید'); return; }
   let list = areas.map(a => JSON.parse(JSON.stringify(a))), mode = 'circle', layers = [], picked = list.length - 1;
   const box = document.createElement('div');
   box.className = 'mapbox';
-  box.innerHTML = `<div class="mapmodes"><button class="chip on" data-m="circle">⭕ دایره</button><button class="chip" data-m="draw">✏️ کشیدن با انگشت</button>
-      <button class="chip" id="mapundo">🗑 حذف انتخاب‌شده</button></div>
+  box.innerHTML = `<div class="mapmodes"><button class="chip on" data-m="circle">⭕ دایره</button><button class="chip" data-m="draw">✏️ کشیدن با انگشت</button></div>
     <div class="maphint" id="maphint"></div>
     <div id="pickmap"></div>
     <div class="mapbar" id="radbar"><input type="range" id="rad" min="200" max="3000" step="100" value="800"><span id="radl"></span></div>
+    <div class="arealist" id="arealist"></div>
     <div class="row2 mapbtns"><button class="big" id="mapok">✅ تأیید</button><button class="big alt" id="mapno">لغو</button></div>`;
   document.body.appendChild(box);
   const $ = s => box.querySelector(s);
   const map = baseMap('pickmap', SHIRAZ, 12);
+  const pick = i => { picked = i; const a = list[i]; if (a && a.c) $('#rad').value = a.c[2]; haptic(); redraw(); };
+  const remove = i => { list.splice(i, 1); picked = list.length - 1; haptic(); redraw(); };
   const redraw = () => {
     layers.forEach(l => l.remove());
     layers = list.map((a, i) => {
       const l = shapeLayer(a).setStyle(i === picked ? PICKED : STYLE).addTo(map);
-      l.on('click', ev => { L.DomEvent.stop(ev); picked = i; if (a.c) $('#rad').value = a.c[2]; haptic(); redraw(); });
+      l.on('click', ev => { L.DomEvent.stop(ev); pick(i); });
       return l;
     });
     const sel = list[picked];
     $('#maphint').textContent = mode === 'circle'
-      ? (sel && sel.c ? 'نوار پایین اندازه‌ی دایره‌ی نارنجی را عوض می‌کند. برای دایره‌ی دیگر روی آن بزنید.' : 'روی نقشه بزنید تا دایره اضافه شود.')
-      : 'دور محدوده را با انگشت بکشید.';
+      ? (sel && sel.c ? 'نوار پایین اندازه‌ی دایره‌ی نارنجی را عوض می‌کند؛ برای دایره‌ی دیگر روی آن بزنید.' : 'روی نقشه بزنید تا دایره اضافه شود.')
+      : 'دور محدوده را با انگشت بکشید؛ برای انتخاب یک شکل، روی آن یک ضربه بزنید.';
     $('#radl').textContent = meters(+$('#rad').value);
-    $('#radbar').style.display = mode === 'circle' ? 'flex' : 'none';
-    $('#mapundo').style.display = sel ? '' : 'none';
+    $('#radbar').style.display = mode === 'circle' && sel && sel.c ? 'flex' : mode === 'circle' ? 'flex' : 'none';
+    $('#arealist').innerHTML = list.map((a, i) => `<div class="arow ${i === picked ? 'on' : ''}" data-i="${i}">
+        <span>${a.c ? '⭕' : '✏️'} ${esc(areaNames(a))}</span><button class="x" data-del="${i}" aria-label="حذف">✕</button></div>`).join('')
+      + (list.length > 1 ? '<button class="sbtn" id="clearall">🧹 پاک کردن همه</button>' : '');
+    $('#arealist').querySelectorAll('.arow').forEach(r => r.onclick = () => pick(+r.dataset.i));
+    $('#arealist').querySelectorAll('[data-del]').forEach(b => b.onclick = ev => { ev.stopPropagation(); remove(+b.dataset.del); });
+    const all = $('#clearall'); if (all) all.onclick = () => { list = []; picked = -1; haptic(); redraw(); };
   };
   if (list.length) map.fitBounds(L.featureGroup(list.map(shapeLayer)).getBounds().pad(0.3));
   const add = a => {
@@ -77,7 +112,7 @@ async function openAreaPicker(areas, done) {
   };
   map.on('click', ev => { if (mode === 'circle') add({ c: [+ev.latlng.lat.toFixed(5), +ev.latlng.lng.toFixed(5), +$('#rad').value] }); });
 
-  // freehand: while drawing, the map does not pan; the finger stroke becomes a polygon
+  // freehand: while drawing, the map does not pan; the finger stroke becomes a polygon, a tap picks a shape
   let stroke = null, line = null;
   const el = map.getContainer();
   const at = ev => map.mouseEventToLatLng(ev.touches ? ev.touches[0] : ev);
@@ -86,7 +121,11 @@ async function openAreaPicker(areas, done) {
   const end = () => {
     if (!stroke) return;
     line.remove();
-    if (stroke.length >= 6) add({ p: simplify(stroke) }); else toast('کمی بزرگ‌تر بکشید');
+    if (stroke.length >= 6) add({ p: simplify(stroke) });
+    else {
+      const pt = [stroke[0].lat, stroke[0].lng], hit = list.findIndex(a => kmOutside(pt, a) === 0);
+      if (hit >= 0) pick(hit);
+    }
     stroke = null;
   };
   el.addEventListener('touchstart', start, { passive: false }); el.addEventListener('touchmove', move, { passive: false });
@@ -101,10 +140,9 @@ async function openAreaPicker(areas, done) {
   });
   $('#rad').oninput = () => {  // resize the picked circle live
     const sel = list[picked];
-    if (sel && sel.c) { sel.c[2] = +$('#rad').value; layers[picked].setRadius(sel.c[2]); }
+    if (sel && sel.c) { sel.c[2] = +$('#rad').value; layers[picked].setRadius(sel.c[2]); $('#arealist .arow.on span').textContent = '⭕ ' + areaNames(sel); }
     $('#radl').textContent = meters(+$('#rad').value);
   };
-  $('#mapundo').onclick = () => { list.splice(picked, 1); picked = list.length - 1; redraw(); };
   const close = v => { map.remove(); box.remove(); done(v); };
   $('#mapno').onclick = () => close(areas);
   $('#mapok').onclick = () => close(list);
@@ -129,4 +167,4 @@ async function showResultsMap(el, items, onPick, areas) {
   return map;
 }
 
-const areaLabel = a => a.c ? `⭕ ${meters(a.c[2])}` : '✏️ محدوده‌ی کشیده‌شده';
+const areaLabel = a => `${a.c ? '⭕' : '✏️'} ${areaNames(a, 3)}`;

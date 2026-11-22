@@ -99,21 +99,55 @@ function parseMoney(s) {
   const n = parseFloat(s.replace(/[^\d.]/g, '')); return isNaN(n) ? '' : Math.round(n * m);
 }
 function readInputs() { if (!window.minp) return; S.min_price = parseMoney(minp.value) || ''; S.max_price = parseMoney(maxp.value) || ''; S.min_area = parseMoney(mina.value) || ''; S.max_area = parseMoney(maxa.value) || ''; }
+function addStreet(h) {
+  if (!S.streets.some(s => norm(s.name) === norm(h.name))) S.streets.push({ name: h.name, district: h.district, districtId: h.districtId, districtIds: h.districtIds });
+  for (const id of h.districtIds || [h.districtId]) {
+    const d = DIST.find(x => x[0] === id); if (d && !S.districts.some(x => x[0] === id)) S.districts.push(d);
+  }
+}
+let openLimit = 24;
+/** Streets of the opened district: «X (همه)» groups first, then single streets (short names first). */
+function districtStreets(d) {
+  const groups = [...streetGroups().values()].filter(g => g.ids.has(d[0]))
+    .map(g => ({ name: g.name + '*', label: `${g.name} (همه)`, districtIds: [...g.ids] }));
+  const singles = streetParts(d[2]).sort((a, b) => a.length - b.length || a.localeCompare(b, 'fa'))
+    .map(st => ({ name: st, label: st, districtIds: [d[0]] }));
+  const taken = new Set(S.streets.map(s => norm(s.name)));
+  return [...groups, ...singles].filter(x => !taken.has(norm(x.name)));
+}
 function drawSel() {
   const chips = [];
   const label = s => s.name.endsWith('*') ? `${s.name.slice(0, -1)} (همه)` : `${s.name} · ${s.district}`;
   S.streets.forEach(s => chips.push(`<button class="chip on x" data-kind="street" data-name="${esc(s.name)}">${esc(label(s))}</button>`));
   S.districts.forEach(d => {
-    if (S.streets.some(s => (s.districtIds || [s.districtId]).includes(d[0]))) return; // covered by a street chip
-    chips.push(`<button class="chip on x" data-kind="district" data-id="${d[0]}">${esc(d[1])}</button>`);
+    // a district reached through a chosen street stays visible (lighter) as the handle to its streets
+    const cov = S.streets.some(s => (s.districtIds || [s.districtId]).includes(d[0])) ? ' cov' : '';
+    chips.push(`<span class="chip on dchip${cov} ${S.open === d[0] ? 'open' : ''}"><button data-open="${d[0]}">${esc(d[1])} ▾</button><button class="x" data-kind="district" data-id="${d[0]}">✕</button></span>`);
   });
   S.areas.forEach((a, i) => chips.unshift(`<button class="chip on x" data-kind="area" data-i="${i}">${esc(areaLabel(a))}</button>`));
   const n = S.districts.length + S.streets.length + S.areas.length;
-  sel.innerHTML = n ? chips.join(' ') : '';
-  sel.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+  const od = S.open && S.districts.find(d => d[0] === S.open);
+  let panel = '';
+  if (od) {
+    const all = districtStreets(od);
+    panel = `<div class="dstreets"><div class="muted">خیابان‌های ${esc(od[1])}:</div>`
+      + all.slice(0, openLimit).map((x, i) => `<button class="chip" data-st="${i}">${esc(x.label)}</button>`).join(' ')
+      + (all.length > openLimit ? ` <button class="chip" id="stmore">+ ${(all.length - openLimit).toLocaleString('fa-IR')} خیابان دیگر</button>` : '')
+      + (all.length ? '' : '<span class="muted">خیابانی ثبت نشده</span>') + '</div>';
+    setTimeout(() => {
+      sel.querySelectorAll('[data-st]').forEach(b => b.onclick = () => {
+        const x = all[+b.dataset.st]; haptic();
+        addStreet({ name: x.name, district: od[1], districtId: od[0], districtIds: [od[0]] }); drawSel();  // stay in this district
+      });
+      const more = document.getElementById('stmore'); if (more) more.onclick = () => { openLimit += 48; drawSel(); };
+    });
+  }
+  sel.innerHTML = (n ? chips.join(' ') : '') + panel;
+  sel.querySelectorAll('[data-open]').forEach(b => b.onclick = () => { haptic(); S.open = S.open === +b.dataset.open ? null : +b.dataset.open; openLimit = 24; drawSel(); });
+  sel.querySelectorAll('.chip.x, .chip .x').forEach(c => c.onclick = () => {
     if (c.dataset.kind === 'area') S.areas = S.areas.filter((_, i) => i !== +c.dataset.i);
     else if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
-    else S.districts = S.districts.filter(d => d[0] != c.dataset.id);
+    else { S.districts = S.districts.filter(d => d[0] != c.dataset.id); if (S.open == c.dataset.id) S.open = null; }
     drawSel(); suggest(dq.value);
   });
 }
@@ -155,14 +189,12 @@ function suggest(q) {
     haptic();
     const h = hits[+c.dataset.i]; if (!h) return;
     if (h.kind === 'street') {
-      if (!S.streets.some(s => norm(s.name) === norm(h.name))) S.streets.push({ name: h.name, district: h.district, districtId: h.districtId, districtIds: h.districtIds });
-      for (const id of h.districtIds || [h.districtId]) {
-        const d = DIST.find(x => x[0] === id); if (d && !S.districts.some(x => x[0] === id)) S.districts.push(d);
-      }
+      addStreet(h);
       toast(`✅ ${h.name.endsWith('*') ? h.name.slice(0, -1) + ' (همه)' : 'خیابان ' + h.name + ' · ' + h.district}`, 1800);
     } else {
       const d = DIST.find(x => x[0] === h.districtId);
       if (d && !S.districts.some(x => x[0] === d[0])) S.districts.push(d);
+      if (d) { S.open = d[0]; openLimit = 24; }  // show its streets right away
       toast(`✅ محله ${h.name}`, 1800);
     }
     drawSel(); suggest(dq.value);

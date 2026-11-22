@@ -80,3 +80,16 @@ details summary{cursor:pointer;font-weight:700;list-style:none}details summary::
 .day.mid{background:color-mix(in srgb,var(--btn) 25%,var(--sbg))}
 .caltxt{text-align:center;margin:10px 0;font-size:14px}
 .mapbox.sheet{background:rgba(0,0,0,.45)}
+.arealist{max-height:24vh;overflow:auto;padding:0 12px 8px}
+.arow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;margin-top:6px;border-radius:10px;background:var(--sbg);font-size:13.5px}
+.arow.on{outline:2px solid #f59e0b}
+.arow .x,.chip .x{border:0;background:none;color:var(--hint);font-size:16px;padding:0 4px}
+.arealist .sbtn{margin-top:8px}
+.dchip{display:inline-flex;align-items:center;gap:2px;padding:0}
+.dchip button{border:0;background:none;color:inherit;font:inherit;padding:8px 6px 8px 10px}
+.dchip .x{color:inherit;opacity:.8;padding:8px 10px 8px 4px}
+.dchip.cov{background:var(--sbg);color:var(--tx)}
+.dchip.open{outline:2px solid #f59e0b}
+.dstreets{margin-top:8px;padding:8px;border-radius:12px;background:var(--sbg)}
+.dstreets .muted{font-size:12.5px;margin-bottom:6px}
+.dstreets .chip{margin:3px 0}
