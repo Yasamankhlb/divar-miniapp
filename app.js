@@ -7,7 +7,7 @@
 const tg = window.Telegram ? Telegram.WebApp : null;
 const BOT = 'DivarMaava_bot';
 const $app = document.getElementById('app');
-const S = { deal: 'sell', ptype: 'any', districts: [], window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
+const S = { deal: 'sell', ptype: 'any', districts: [], streets: [], window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
 let DIST = [];
 const fa = n => (n === null || n === undefined || n === '') ? '—' : String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,6 +15,16 @@ function money(v) { if (v == null) return '—'; v = +v; if (v >= 1e9) return fa
 function toast(t, ms = 2600) { const e = document.getElementById('toast'); e.textContent = t; e.style.display = 'block'; clearTimeout(e._t); e._t = setTimeout(() => e.style.display = 'none', ms); }
 function haptic(k = 'light') { try { tg.HapticFeedback.impactOccurred(k) } catch (e) { } }
 const norm = s => String(s || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').replace(/[\s\u200c]/g, '').replace(/[آأإ]/g, 'ا');
+// Street name without «بلوار/خیابان/کوچه/میدان/شهید»: typing «مهر» finds «بلوار مهر» first.
+const PLACE_WORDS = /^(بلوار|خیابان|خ|کوچه|میدان|شهید)\s+/;
+const skey = s => { let t = String(s || '').trim(); while (PLACE_WORDS.test(t)) t = t.replace(PLACE_WORDS, ''); return norm(t); };
+function streetRank(st, n) {
+  const k = skey(st), sn = norm(st);
+  if (k === n) return 0;
+  if (k.startsWith(n)) return 1;
+  if (sn.includes(n)) return 2;
+  return -1;
+}
 // keyboard-button launch has no initData; menu/inline launch has it
 const fromKeyboard = () => tg && !tg.initData && tg.platform !== 'unknown';
 
@@ -34,9 +44,9 @@ function Search() {
   $app.innerHTML = `<div class="hdr"><h1>🔎 جستجوی آگهی ملک</h1><p>دیوار شیراز · گزینه‌ها را بزنید، بعد یکی از دکمه‌های پایین</p></div>
   <div class="sec"><h3>نوع معامله</h3>${seg('deal', { sell: '🏷 فروش', rent: '🔑 اجاره', mortgage: '💰 رهن' })}</div>
   <div class="sec"><h3>نوع ملک</h3>${seg('ptype', types)}</div>
-  <div class="sec"><h3>محله <small>(اسم محله یا خیابان را تایپ کنید)</small></h3>
+  <div class="sec"><h3>محله / خیابان <small>(اسم محله یا خیابان را تایپ کنید)</small></h3>
     <div class="sugg" id="sel"></div>
-    <input class="inp" id="dq" placeholder="مثلاً ارم، قصرالدشت، چمران…" autocomplete="off" style="margin-top:8px">
+    <input class="inp" id="dq" placeholder="مثلاً ارم، قصرالدشت، ابیوردی، چمران…" autocomplete="off" style="margin-top:8px">
     <div class="sugg" id="dsug"></div></div>
   <div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته' })}</div>
   <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b><div class="muted" style="font-size:13px">مشاورهای پنهان هم از روی متن کنار گذاشته می‌شوند</div></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
@@ -65,26 +75,73 @@ function parseMoney(s) {
 }
 function readInputs() { if (!window.minp) return; S.min_price = parseMoney(minp.value) || ''; S.max_price = parseMoney(maxp.value) || ''; S.min_area = parseMoney(mina.value) || ''; S.max_area = parseMoney(maxa.value) || ''; }
 function drawSel() {
-  sel.innerHTML = S.districts.length ? S.districts.map(d => `<button class="chip on x" data-id="${d[0]}">${esc(d[1])}</button>`).join('') : '<span class="muted" style="font-size:13px">هیچ محله‌ای انتخاب نشده (= همه‌ی شیراز)</span>';
-  sel.querySelectorAll('.chip').forEach(c => c.onclick = () => { S.districts = S.districts.filter(d => d[0] != c.dataset.id); drawSel(); suggest(dq.value); });
+  const chips = [];
+  S.streets.forEach(s => chips.push(`<button class="chip on x" data-kind="street" data-name="${esc(s.name)}">${esc(s.name)} · ${esc(s.district)}</button>`));
+  S.districts.forEach(d => {
+    if (S.streets.some(s => s.districtId == d[0])) return; // covered by a street chip
+    chips.push(`<button class="chip on x" data-kind="district" data-id="${d[0]}">${esc(d[1])}</button>`);
+  });
+  const n = S.districts.length + S.streets.length;
+  sel.innerHTML = n
+    ? `<span class="muted" style="font-size:13px">${fa(n)} مورد (برای حذف بزنید):</span> ` + chips.join(' ')
+    : '<span class="muted" style="font-size:13px">هیچ محله/خیابانی انتخاب نشده (= همه‌ی شیراز)</span>';
+  sel.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+    if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
+    else S.districts = S.districts.filter(d => d[0] != c.dataset.id);
+    drawSel(); suggest(dq.value);
+  });
 }
+const POPULAR = [522, 515, 533, 505, 503, 2782, 511, 1357];
+function streetParts(s) { return String(s || '').split(/[،,]/).map(x => x.trim()).filter(Boolean); }
 function suggest(q) {
-  const n = norm(q), have = new Set(S.districts.map(d => d[0]));
-  let list;
-  if (!n) list = DIST.filter(d => d[0] === 522 || d[0] === 515);
-  else {
-    const a = DIST.filter(d => norm(d[1]).startsWith(n)), b = DIST.filter(d => !a.includes(d) && norm(d[1]).includes(n)), c = DIST.filter(d => !a.includes(d) && !b.includes(d) && norm(d[2]).includes(n));
-    list = [...a, ...b, ...c].slice(0, 15);
+  const n = norm(q);
+  const haveD = new Set(S.districts.map(d => d[0]));
+  const haveS = new Set(S.streets.map(s => norm(s.name)));
+  let hits = []; // {kind, id, name, district, label, districtId}
+  if (!n) {
+    hits = POPULAR.map(i => DIST.find(d => d[0] === i)).filter(Boolean)
+      .map(d => ({ kind: 'district', districtId: d[0], name: d[1], district: d[1], label: d[1] }));
+  } else {
+    for (const d of DIST) {
+      const dn = norm(d[1]);
+      if (dn.startsWith(n) || dn.includes(n))
+        hits.push({ kind: 'district', districtId: d[0], name: d[1], district: d[1], label: d[1], rank: dn === n ? 0 : dn.startsWith(n) ? 1 : 2 });
+    }
+    for (const d of DIST) {
+      for (const st of streetParts(d[2])) {
+        const r = streetRank(st, n);
+        if (r >= 0)
+          hits.push({ kind: 'street', districtId: d[0], name: st, district: d[1], label: `${st} · ${d[1]}`, rank: r });
+      }
+    }
+    hits.sort((a, b) => (a.rank - b.rank) || a.label.localeCompare(b.label, 'fa'));
   }
-  list = list.filter(d => !have.has(d[0]));
-  dsug.innerHTML = list.map(d => `<button class="chip" data-id="${d[0]}" title="${esc(d[2])}">${esc(d[1])}</button>`).join('') || (n ? '<span class="muted">محله‌ای پیدا نشد</span>' : '');
-  dsug.querySelectorAll('.chip').forEach(c => c.onclick = () => { haptic(); S.districts.push(DIST.find(d => d[0] == c.dataset.id)); dq.value = ''; drawSel(); suggest(''); });
+  hits = hits.filter(h => h.kind === 'street' ? !haveS.has(norm(h.name)) : !haveD.has(h.districtId)).slice(0, 15);
+  dsug.innerHTML = hits.map((h, i) => `<button class="chip" data-i="${i}" title="${esc(h.kind === 'street' ? h.district : (DIST.find(d => d[0] === h.districtId)?.[2] || ''))}">${esc(h.label)}</button>`).join('')
+    || (n ? '<span class="muted">محله/خیابانی پیدا نشد</span>' : '');
+  dsug.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+    haptic();
+    const h = hits[+c.dataset.i]; if (!h) return;
+    if (h.kind === 'street') {
+      if (!S.streets.some(s => norm(s.name) === norm(h.name))) S.streets.push({ name: h.name, district: h.district, districtId: h.districtId });
+      if (!S.districts.some(d => d[0] === h.districtId)) {
+        const d = DIST.find(x => x[0] === h.districtId); if (d) S.districts.push(d);
+      }
+      toast(`✅ خیابان ${h.name} · ${h.district}`, 1800);
+    } else {
+      const d = DIST.find(x => x[0] === h.districtId);
+      if (d && !S.districts.some(x => x[0] === d[0])) S.districts.push(d);
+      toast(`✅ محله ${h.name}`, 1800);
+    }
+    drawSel(); suggest(dq.value);
+  });
 }
 function submit(mode) {
   readInputs();
   const box = document.getElementById('url'), link = (box && box.value || '').trim();
   if (link && !/divar\.ir\/s\//.test(link)) return toast('لینک باید شبیه divar.ir/s/shiraz/… باشد');
-  const q = { v: 1, a: mode, deal: S.deal, ptype: S.ptype, d: S.districts.map(d => d[0]), w: S.window, p: S.personal ? 1 : 0, rep: mode === 'live' ? S.repeat : 0 };
+  const q = { v: 1, a: mode, deal: S.deal, ptype: S.ptype, d: S.districts.map(d => d[0]),
+    streets: S.streets.map(s => s.name), w: S.window, p: S.personal ? 1 : 0, rep: mode === 'live' ? S.repeat : 0 };
   for (const k of ['min_price', 'max_price', 'min_area', 'max_area']) if (S[k]) q[k] = S[k];
   if (link) { q.url = link; q.a = 'live'; }
   send(q, mode);
@@ -147,7 +204,7 @@ async function Results(b64) {
       else { const u = `https://t.me/${BOT}?start=d_${c.dataset.id}`; tg ? (tg.openTelegramLink(u), setTimeout(() => tg.close(), 400)) : (location.href = u); }
     });
     $app.querySelectorAll('.card').forEach(c => c.onclick = () => { const u = 'https://divar.ir/v/' + c.dataset.t; tg ? tg.openLink(u) : window.open(u); });
-    btnNew.onclick = async () => { try { sessionStorage.removeItem('dy_data') } catch (e) { } history.replaceState(null, '', location.pathname); if (!DIST.length) { try { DIST = await (await fetch('districts.json?v=1')).json(); } catch (e) { } } Search(); };
+    btnNew.onclick = async () => { try { sessionStorage.removeItem('dy_data') } catch (e) { } history.replaceState(null, '', location.pathname); if (!DIST.length) { try { DIST = await (await fetch('districts.json?v=2')).json(); } catch (e) { } } Search(); };
   };
   draw();
 }
@@ -158,6 +215,6 @@ async function Results(b64) {
   const h = new URLSearchParams(location.hash.slice(1)), qs = new URLSearchParams(location.search);
   const data = h.get('data') || qs.get('data') || (sessionStorage.getItem('dy_data') || '');
   if (data) { try { sessionStorage.setItem('dy_data', data) } catch (e) { } return Results(data); }
-  try { DIST = await (await fetch('districts.json?v=1')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
+  try { DIST = await (await fetch('districts.json?v=2')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
   Search();
 })();
