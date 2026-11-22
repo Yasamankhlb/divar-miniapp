@@ -93,3 +93,6 @@ details summary{cursor:pointer;font-weight:700;list-style:none}details summary::
 .dstreets{margin-top:8px;padding:8px;border-radius:12px;background:var(--sbg)}
 .dstreets .muted{font-size:12.5px;margin-bottom:6px}
 .dstreets .chip{margin:3px 0}
+.dsthead{font-weight:700;margin-bottom:4px}
+.dsec{margin-top:8px}
+.dsec .muted{font-size:12px;margin-bottom:4px}

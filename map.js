@@ -83,7 +83,10 @@ async function openAreaPicker(areas, done) {
   document.body.appendChild(box);
   const $ = s => box.querySelector(s);
   const map = baseMap('pickmap', SHIRAZ, 12);
-  const pick = i => { picked = i; const a = list[i]; if (a && a.c) $('#rad').value = a.c[2]; haptic(); redraw(); };
+  const pick = (i, fly) => {
+    picked = i; const a = list[i]; if (a && a.c) $('#rad').value = a.c[2]; haptic(); redraw();
+    if (fly && layers[i]) map.flyToBounds(layers[i].getBounds(), { padding: [30, 30], maxZoom: 16, duration: 0.6 });
+  };
   const remove = i => { list.splice(i, 1); picked = list.length - 1; haptic(); redraw(); };
   const redraw = () => {
     layers.forEach(l => l.remove());
@@ -101,7 +104,7 @@ async function openAreaPicker(areas, done) {
     $('#arealist').innerHTML = list.map((a, i) => `<div class="arow ${i === picked ? 'on' : ''}" data-i="${i}">
         <span>${a.c ? '⭕' : '✏️'} ${esc(areaNames(a))}</span><button class="x" data-del="${i}" aria-label="حذف">✕</button></div>`).join('')
       + (list.length > 1 ? '<button class="sbtn" id="clearall">🧹 پاک کردن همه</button>' : '');
-    $('#arealist').querySelectorAll('.arow').forEach(r => r.onclick = () => pick(+r.dataset.i));
+    $('#arealist').querySelectorAll('.arow').forEach(r => r.onclick = () => pick(+r.dataset.i, true));  // show it on the map
     $('#arealist').querySelectorAll('[data-del]').forEach(b => b.onclick = ev => { ev.stopPropagation(); remove(+b.dataset.del); });
     const all = $('#clearall'); if (all) all.onclick = () => { list = []; picked = -1; haptic(); redraw(); };
   };
