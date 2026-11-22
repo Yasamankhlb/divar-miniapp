@@ -28,6 +28,7 @@ function baseMap(el, center, zoom) {
 
 const meters = r => r >= 1000 ? `${(r / 1000).toLocaleString('fa-IR')} کیلومتر` : `${r.toLocaleString('fa-IR')} متر`;
 const STYLE = { color: '#2481cc', weight: 2, fillOpacity: 0.15 };
+const PICKED = { color: '#f59e0b', weight: 3, fillOpacity: 0.25 };
 
 function shapeLayer(a) {
   return a.c ? L.circle([a.c[0], a.c[1]], { ...STYLE, radius: a.c[2] }) : L.polygon(a.p, STYLE);
@@ -42,11 +43,11 @@ function simplify(pts) {
 /** Full-screen editor. areas: current list; done(list). */
 async function openAreaPicker(areas, done) {
   try { await loadLeaflet(); } catch (e) { toast('نقشه بارگذاری نشد؛ اینترنت را بررسی کنید'); return; }
-  let list = areas.slice(), mode = 'circle', layers = [];
+  let list = areas.map(a => JSON.parse(JSON.stringify(a))), mode = 'circle', layers = [], picked = list.length - 1;
   const box = document.createElement('div');
   box.className = 'mapbox';
   box.innerHTML = `<div class="mapmodes"><button class="chip on" data-m="circle">⭕ دایره</button><button class="chip" data-m="draw">✏️ کشیدن با انگشت</button>
-      <button class="chip" id="mapundo">↩️ حذف آخری</button></div>
+      <button class="chip" id="mapundo">🗑 حذف انتخاب‌شده</button></div>
     <div class="maphint" id="maphint"></div>
     <div id="pickmap"></div>
     <div class="mapbar" id="radbar"><input type="range" id="rad" min="200" max="3000" step="100" value="800"><span id="radl"></span></div>
@@ -56,16 +57,23 @@ async function openAreaPicker(areas, done) {
   const map = baseMap('pickmap', SHIRAZ, 12);
   const redraw = () => {
     layers.forEach(l => l.remove());
-    layers = list.map(a => shapeLayer(a).addTo(map));
-    $('#maphint').textContent = (mode === 'circle' ? 'روی نقشه بزنید: یک دایره با شعاع زیر اضافه می‌شود.'
-      : 'با انگشت دور محدوده را بکشید (نقشه در این حالت جابه‌جا نمی‌شود).') + ` — ${list.length.toLocaleString('fa-IR')} محدوده`;
-    $('#radl').textContent = 'شعاع: ' + meters(+$('#rad').value);
+    layers = list.map((a, i) => {
+      const l = shapeLayer(a).setStyle(i === picked ? PICKED : STYLE).addTo(map);
+      l.on('click', ev => { L.DomEvent.stop(ev); picked = i; if (a.c) $('#rad').value = a.c[2]; haptic(); redraw(); });
+      return l;
+    });
+    const sel = list[picked];
+    $('#maphint').textContent = mode === 'circle'
+      ? (sel && sel.c ? 'نوار پایین اندازه‌ی دایره‌ی نارنجی را عوض می‌کند. برای دایره‌ی دیگر روی آن بزنید.' : 'روی نقشه بزنید تا دایره اضافه شود.')
+      : 'دور محدوده را با انگشت بکشید.';
+    $('#radl').textContent = meters(+$('#rad').value);
     $('#radbar').style.display = mode === 'circle' ? 'flex' : 'none';
+    $('#mapundo').style.display = sel ? '' : 'none';
   };
   if (list.length) map.fitBounds(L.featureGroup(list.map(shapeLayer)).getBounds().pad(0.3));
   const add = a => {
     if (list.length >= MAX_AREAS) return toast(`حداکثر ${MAX_AREAS.toLocaleString('fa-IR')} محدوده`);
-    haptic(); list.push(a); redraw();
+    haptic(); list.push(a); picked = list.length - 1; redraw();
   };
   map.on('click', ev => { if (mode === 'circle') add({ c: [+ev.latlng.lat.toFixed(5), +ev.latlng.lng.toFixed(5), +$('#rad').value] }); });
 
@@ -91,8 +99,12 @@ async function openAreaPicker(areas, done) {
     if (mode === 'draw') map.dragging.disable(); else map.dragging.enable();
     redraw();
   });
-  $('#rad').oninput = redraw;
-  $('#mapundo').onclick = () => { list.pop(); redraw(); };
+  $('#rad').oninput = () => {  // resize the picked circle live
+    const sel = list[picked];
+    if (sel && sel.c) { sel.c[2] = +$('#rad').value; layers[picked].setRadius(sel.c[2]); }
+    $('#radl').textContent = meters(+$('#rad').value);
+  };
+  $('#mapundo').onclick = () => { list.splice(picked, 1); picked = list.length - 1; redraw(); };
   const close = v => { map.remove(); box.remove(); done(v); };
   $('#mapno').onclick = () => close(areas);
   $('#mapok').onclick = () => close(list);

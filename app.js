@@ -61,27 +61,31 @@ function seg(key, opts) {
 function Search() {
   const types = { any: 'همه', apartment: '🏢 آپارتمان', villa: '🏡 ویلا/خانه', land: '🌱 زمین/کلنگی', commercial: '🏬 تجاری/اداری', building: '🏗 ساختمان کامل' };
   const priceLbl = S.deal === 'sell' ? 'قیمت (تومان)' : 'ودیعه (تومان)';
-  $app.innerHTML = `<div class="hdr"><h1>🔎 جستجوی آگهی ملک</h1><p>دیوار شیراز · گزینه‌ها را بزنید، بعد یکی از دکمه‌های پایین</p></div>
+  $app.innerHTML = `<div class="hdr"><h1>🔎 جستجوی آگهی ملک</h1></div>
   <div class="sec"><h3>نوع معامله</h3>${seg('deal', { sell: '🏷 فروش', rent: '🔑 اجاره', mortgage: '💰 رهن' })}</div>
   <div class="sec"><h3>نوع ملک</h3>${seg('ptype', types)}</div>
-  <div class="sec"><h3>محله / خیابان <small>(اسم محله یا خیابان را تایپ کنید)</small></h3>
+  <div class="sec"><h3>محله / خیابان</h3>
     <div class="sugg" id="sel"></div>
     <input class="inp" id="dq" placeholder="مثلاً ارم، قصرالدشت، ابیوردی، چمران…" autocomplete="off" style="margin-top:8px">
-    <button class="sbtn" id="btnMap" style="margin-top:8px">🗺 یا روی نقشه محدوده مشخص کنید (چند تا هم می‌شود)</button>
+    <button class="sbtn" id="btnMap" style="margin-top:8px">🗺 روی نقشه</button>
     <div class="sugg" id="dsug"></div></div>
-  <div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته' })}</div>
+  <div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته', custom: S.range ? '📅 ' + jLabel(S.range.from) + (S.range.to !== S.range.from ? ' تا ' + jLabel(S.range.to) : '') : '📅 تقویم' })}</div>
   <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
-  <div class="sec"><details ${S.min_price || S.max_price || S.min_area || S.max_area ? 'open' : ''}><summary>قیمت و متراژ (اختیاری)</summary>
+  <div class="sec"><details ${S.min_price || S.max_price || S.min_area || S.max_area ? 'open' : ''}><summary>قیمت و متراژ</summary>
     <div class="row2"><input class="inp" id="minp" placeholder="${priceLbl} از"><input class="inp" id="maxp" placeholder="تا"></div>
-    <div class="muted" style="font-size:12px;margin-top:4px">مثلاً «۵ میلیارد» یا «۸۰۰ میلیون»</div>
     <div class="row2"><input class="inp" inputmode="numeric" id="mina" placeholder="متراژ از (متر)"><input class="inp" inputmode="numeric" id="maxa" placeholder="تا"></div></details></div>
-  <div class="sec"><h3>تکرار خودکار <small>(فقط جستجوی تازه)</small></h3>${seg('repeat', { 0: 'یک بار', 360: 'هر ۶ ساعت', 720: 'هر ۱۲ ساعت', 1440: 'روزانه' })}</div>
+  <div class="sec"><h3>تکرار خودکار</h3>${seg('repeat', { 0: 'یک بار', 360: 'هر ۶ ساعت', 720: 'هر ۱۲ ساعت', 1440: 'روزانه' })}</div>
   <div class="sec"><details><summary>یا لینک جستجوی دیوار</summary>
     <textarea class="inp" id="url" rows="3" dir="ltr" style="margin-top:8px" placeholder="https://divar.ir/s/shiraz/buy-apartment?districts=522"></textarea></details></div>
   <button class="big" id="btnLive">🚀 جستجوی تازه در دیوار</button>
   <button class="big alt" id="btnStored">🗂 فقط از آگهی‌های ذخیره‌شده</button>
   <div class="row2" style="padding:0 12px"><button class="big alt" style="margin:0;width:auto" id="btnJobs">🕘 کارها</button><button class="big alt" style="margin:0;width:auto" id="btnHelp">❓ راهنما</button></div><div style="height:16px"></div>`;
-  $app.querySelectorAll('.opt').forEach(b => b.onclick = () => { haptic(); readInputs(); S[b.dataset.k] = b.dataset.k === 'repeat' ? +b.dataset.v : b.dataset.v; Search(); });
+  $app.querySelectorAll('.opt').forEach(b => b.onclick = () => {
+    haptic(); readInputs();
+    if (b.dataset.k === 'window' && b.dataset.v === 'custom')
+      return openDateRange(S.range, r => { if (r) { S.range = r; S.window = 'custom'; } Search(); });
+    S[b.dataset.k] = b.dataset.k === 'repeat' ? +b.dataset.v : b.dataset.v; Search();
+  });
   pers.onclick = () => { haptic(); S.personal = !S.personal; pers.classList.toggle('on', S.personal); };
   minp.value = S.min_price ? money(S.min_price) : ''; maxp.value = S.max_price ? money(S.max_price) : ''; mina.value = S.min_area; maxa.value = S.max_area;
   drawSel(); dq.oninput = () => suggest(dq.value); suggest('');
@@ -105,9 +109,7 @@ function drawSel() {
   });
   S.areas.forEach((a, i) => chips.unshift(`<button class="chip on x" data-kind="area" data-i="${i}">${esc(areaLabel(a))}</button>`));
   const n = S.districts.length + S.streets.length + S.areas.length;
-  sel.innerHTML = n
-    ? `<span class="muted" style="font-size:13px">${fa(n)} مورد (برای حذف بزنید):</span> ` + chips.join(' ')
-    : '<span class="muted" style="font-size:13px">هیچ محله/خیابانی انتخاب نشده (= همه‌ی شیراز)</span>';
+  sel.innerHTML = n ? chips.join(' ') : '';
   sel.querySelectorAll('.chip').forEach(c => c.onclick = () => {
     if (c.dataset.kind === 'area') S.areas = S.areas.filter((_, i) => i !== +c.dataset.i);
     else if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
@@ -174,6 +176,7 @@ function submit(mode) {
     streets: S.streets.map(s => s.name), w: S.window, p: S.personal ? 1 : 0, rep: mode === 'live' ? S.repeat : 0 };
   for (const k of ['min_price', 'max_price', 'min_area', 'max_area']) if (S[k]) q[k] = S[k];
   if (S.areas.length) q.areas = S.areas;
+  if (S.window === 'custom' && S.range) { q.from = S.range.from; q.to = S.range.to; }
   if (link) { q.url = link; q.a = 'live'; }
   send(q, mode);
 }
@@ -182,7 +185,7 @@ const DEAL_C = { sell: 's', rent: 'r', mortgage: 'm' }, TYPE_C = { any: 'x', apa
 function startCode(q) {
   if (q.a === 'jobs') return 'jobs'; if (q.a === 'help') return 'help';
   if (q.url) return null;
-  if ((q.streets && q.streets.length) || q.areas) return null; // the short link cannot carry them
+  if ((q.streets && q.streets.length) || q.areas || q.from) return null; // the short link cannot carry them
   const m = v => v ? Math.round(v / 1e6).toString(36) : '', ar = v => v ? (+v).toString(36) : '';
   const code = 'q' + (q.a === 'live' ? 'L' : 'S') + DEAL_C[q.deal] + TYPE_C[q.ptype] + WIN_C[q.w] + q.p + REP_C[q.rep || 0] + '_' + q.d.map(i => i.toString(36)).join('-') + '_' + [m(q.min_price), m(q.max_price), ar(q.min_area), ar(q.max_area)].join('_');
   return code.length <= 64 ? code : null;
