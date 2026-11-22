@@ -67,3 +67,4 @@ details summary{cursor:pointer;font-weight:700;list-style:none}details summary::
 .mapbtns .big{margin:0}
 #resmap{height:62vh;margin:0 12px;border-radius:12px;overflow:hidden}
 .leaflet-container{font-family:inherit}
+.mapmodes{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px 0}

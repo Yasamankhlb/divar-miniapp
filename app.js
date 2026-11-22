@@ -7,7 +7,7 @@
 const tg = window.Telegram ? Telegram.WebApp : null;
 const BOT = 'DivarMaava_bot';
 const $app = document.getElementById('app');
-const S = { deal: 'sell', ptype: 'any', districts: [], streets: [], area: null, window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
+const S = { deal: 'sell', ptype: 'any', districts: [], streets: [], areas: [], window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
 let DIST = [];
 const fa = n => (n === null || n === undefined || n === '') ? '—' : String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -67,10 +67,10 @@ function Search() {
   <div class="sec"><h3>محله / خیابان <small>(اسم محله یا خیابان را تایپ کنید)</small></h3>
     <div class="sugg" id="sel"></div>
     <input class="inp" id="dq" placeholder="مثلاً ارم، قصرالدشت، ابیوردی، چمران…" autocomplete="off" style="margin-top:8px">
-    <button class="sbtn" id="btnMap" style="margin-top:8px">🗺 یا روی نقشه محدوده بکشید</button>
+    <button class="sbtn" id="btnMap" style="margin-top:8px">🗺 یا روی نقشه محدوده مشخص کنید (چند تا هم می‌شود)</button>
     <div class="sugg" id="dsug"></div></div>
   <div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته' })}</div>
-  <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b><div class="muted" style="font-size:13px">مشاورهای پنهان هم از روی متن کنار گذاشته می‌شوند</div></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
+  <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
   <div class="sec"><details ${S.min_price || S.max_price || S.min_area || S.max_area ? 'open' : ''}><summary>قیمت و متراژ (اختیاری)</summary>
     <div class="row2"><input class="inp" id="minp" placeholder="${priceLbl} از"><input class="inp" id="maxp" placeholder="تا"></div>
     <div class="muted" style="font-size:12px;margin-top:4px">مثلاً «۵ میلیارد» یا «۸۰۰ میلیون»</div>
@@ -80,13 +80,12 @@ function Search() {
     <textarea class="inp" id="url" rows="3" dir="ltr" style="margin-top:8px" placeholder="https://divar.ir/s/shiraz/buy-apartment?districts=522"></textarea></details></div>
   <button class="big" id="btnLive">🚀 جستجوی تازه در دیوار</button>
   <button class="big alt" id="btnStored">🗂 فقط از آگهی‌های ذخیره‌شده</button>
-  <div class="row2" style="padding:0 12px"><button class="big alt" style="margin:0;width:auto" id="btnJobs">🕘 کارها</button><button class="big alt" style="margin:0;width:auto" id="btnHelp">❓ راهنما</button></div>
-  <div class="sec muted" style="font-size:12.5px;line-height:1.9">🔒 فقط صاحب ربات می‌تواند جستجو کند. شماره‌ی تماس گرفته نمی‌شود و وارد حساب دیوار نمی‌شویم. بین صفحه‌ها حداقل ۸ ثانیه فاصله است و با کپچا یا مسدودی کار متوقف می‌شود.</div><div style="height:16px"></div>`;
+  <div class="row2" style="padding:0 12px"><button class="big alt" style="margin:0;width:auto" id="btnJobs">🕘 کارها</button><button class="big alt" style="margin:0;width:auto" id="btnHelp">❓ راهنما</button></div><div style="height:16px"></div>`;
   $app.querySelectorAll('.opt').forEach(b => b.onclick = () => { haptic(); readInputs(); S[b.dataset.k] = b.dataset.k === 'repeat' ? +b.dataset.v : b.dataset.v; Search(); });
   pers.onclick = () => { haptic(); S.personal = !S.personal; pers.classList.toggle('on', S.personal); };
   minp.value = S.min_price ? money(S.min_price) : ''; maxp.value = S.max_price ? money(S.max_price) : ''; mina.value = S.min_area; maxa.value = S.max_area;
   drawSel(); dq.oninput = () => suggest(dq.value); suggest('');
-  btnMap.onclick = () => { haptic(); readInputs(); openAreaPicker(S.area, a => { S.area = a; drawSel(); }); };
+  btnMap.onclick = () => { haptic(); readInputs(); openAreaPicker(S.areas, a => { S.areas = a; drawSel(); }); };
   btnLive.onclick = () => submit('live'); btnStored.onclick = () => submit('stored');
   btnJobs.onclick = () => send({ v: 1, a: 'jobs' }, 'jobs'); btnHelp.onclick = () => send({ v: 1, a: 'help' }, 'help');
 }
@@ -104,13 +103,13 @@ function drawSel() {
     if (S.streets.some(s => (s.districtIds || [s.districtId]).includes(d[0]))) return; // covered by a street chip
     chips.push(`<button class="chip on x" data-kind="district" data-id="${d[0]}">${esc(d[1])}</button>`);
   });
-  if (S.area) chips.unshift(`<button class="chip on x" data-kind="area">${esc(areaLabel(S.area))}</button>`);
-  const n = S.districts.length + S.streets.length + (S.area ? 1 : 0);
+  S.areas.forEach((a, i) => chips.unshift(`<button class="chip on x" data-kind="area" data-i="${i}">${esc(areaLabel(a))}</button>`));
+  const n = S.districts.length + S.streets.length + S.areas.length;
   sel.innerHTML = n
     ? `<span class="muted" style="font-size:13px">${fa(n)} مورد (برای حذف بزنید):</span> ` + chips.join(' ')
     : '<span class="muted" style="font-size:13px">هیچ محله/خیابانی انتخاب نشده (= همه‌ی شیراز)</span>';
   sel.querySelectorAll('.chip').forEach(c => c.onclick = () => {
-    if (c.dataset.kind === 'area') S.area = null;
+    if (c.dataset.kind === 'area') S.areas = S.areas.filter((_, i) => i !== +c.dataset.i);
     else if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
     else S.districts = S.districts.filter(d => d[0] != c.dataset.id);
     drawSel(); suggest(dq.value);
@@ -174,7 +173,7 @@ function submit(mode) {
   const q = { v: 1, a: mode, deal: S.deal, ptype: S.ptype, d: S.districts.map(d => d[0]),
     streets: S.streets.map(s => s.name), w: S.window, p: S.personal ? 1 : 0, rep: mode === 'live' ? S.repeat : 0 };
   for (const k of ['min_price', 'max_price', 'min_area', 'max_area']) if (S[k]) q[k] = S[k];
-  if (S.area) q.area = S.area;
+  if (S.areas.length) q.areas = S.areas;
   if (link) { q.url = link; q.a = 'live'; }
   send(q, mode);
 }
@@ -183,6 +182,7 @@ const DEAL_C = { sell: 's', rent: 'r', mortgage: 'm' }, TYPE_C = { any: 'x', apa
 function startCode(q) {
   if (q.a === 'jobs') return 'jobs'; if (q.a === 'help') return 'help';
   if (q.url) return null;
+  if ((q.streets && q.streets.length) || q.areas) return null; // the short link cannot carry them
   const m = v => v ? Math.round(v / 1e6).toString(36) : '', ar = v => v ? (+v).toString(36) : '';
   const code = 'q' + (q.a === 'live' ? 'L' : 'S') + DEAL_C[q.deal] + TYPE_C[q.ptype] + WIN_C[q.w] + q.p + REP_C[q.rep || 0] + '_' + q.d.map(i => i.toString(36)).join('-') + '_' + [m(q.min_price), m(q.max_price), ar(q.min_area), ar(q.max_area)].join('_');
   return code.length <= 64 ? code : null;
@@ -193,7 +193,9 @@ function send(q, mode) {
   const code = startCode(q);
   if (code && tg) { tg.openTelegramLink(`https://t.me/${BOT}?start=${code}`); setTimeout(() => tg.close(), 400); return; }
   if (code) { location.href = `https://t.me/${BOT}?start=${code}`; return; }
-  toast('این جستجو طولانی است؛ برنامه را از دکمه‌ی «📱 جستجو» پایین چت باز کنید، یا لینک را مستقیم در چت بفرستید.', 6000);
+  // Only the chat-keyboard launch can hand the whole search to the bot: keep the choices for then.
+  try { localStorage.setItem('dy_draft', JSON.stringify(S)); } catch (e) { }
+  toast('خیابان و محدوده‌ی نقشه فقط وقتی فرستاده می‌شود که برنامه را از دکمه‌ی «📱 جستجو با مینی‌اپ» پایین چت باز کنید. انتخاب‌هایتان ذخیره شد؛ از آن دکمه باز کنید و دوباره بزنید.', 8000);
 }
 
 // ---------------------------------------------------------------- results viewer (#data=)
@@ -255,5 +257,6 @@ async function Results(b64) {
   const data = h.get('data') || qs.get('data') || (sessionStorage.getItem('dy_data') || '');
   if (data) { try { sessionStorage.setItem('dy_data', data) } catch (e) { } return Results(data); }
   try { DIST = await (await fetch('districts.json?v=2')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
+  try { const d = JSON.parse(localStorage.getItem('dy_draft') || 'null'); if (d) { Object.assign(S, d); localStorage.removeItem('dy_draft'); } } catch (e) { }
   Search();
 })();
