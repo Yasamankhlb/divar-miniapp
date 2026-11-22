@@ -7,7 +7,7 @@
 const tg = window.Telegram ? Telegram.WebApp : null;
 const BOT = 'DivarMaava_bot';
 const $app = document.getElementById('app');
-const S = { deal: 'sell', ptype: 'any', districts: [], streets: [], window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
+const S = { deal: 'sell', ptype: 'any', districts: [], streets: [], area: null, window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
 let DIST = [];
 const fa = n => (n === null || n === undefined || n === '') ? '—' : String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,6 +18,26 @@ const norm = s => String(s || '').replace(/ي/g, 'ی').replace(/ك/g, 'ک').repl
 // Street name without «بلوار/خیابان/کوچه/میدان/شهید»: typing «مهر» finds «بلوار مهر» first.
 const PLACE_WORDS = /^(بلوار|خیابان|خ|کوچه|میدان|شهید)\s+/;
 const skey = s => { let t = String(s || '').trim(); while (PLACE_WORDS.test(t)) t = t.replace(PLACE_WORDS, ''); return norm(t); };
+// «رادفر۲/۱»، «۸/۱رادفر»، «رادفر دوم» -> «رادفر»: one «رادفر (همه)» chip selects every variant.
+const ORDINALS = new Set(['اول','دوم','سوم','چهارم','پنجم','ششم','هفتم','هشتم','نهم','دهم','یازدهم','دوازدهم','شمالی','جنوبی','شرقی','غربی','الف','ب','ج','کوچه','فرعی','بن‌بست','بلوار','خیابان','خ','میدان','شهید']);
+function streetBase(st) {
+  const words = String(st || '').replace(/[0-9۰-۹/\\\-_.]+/g, ' ').split(/\s+/).filter(w => w && !ORDINALS.has(w));
+  return words.join(' ') || String(st || '').trim();
+}
+let GROUPS = null; // norm(base) -> {name, members:Set, ids:Set}
+function streetGroups() {
+  if (GROUPS && GROUPS.src === DIST) return GROUPS.map;
+  const map = new Map();
+  for (const d of DIST) for (const st of streetParts(d[2])) {
+    const base = streetBase(st), k = skey(base);
+    if (!k) continue;
+    if (!map.has(k)) map.set(k, { name: base, members: new Set(), ids: new Set() });
+    map.get(k).members.add(st); map.get(k).ids.add(d[0]);
+  }
+  for (const [k, g] of map) if (g.members.size < 2) map.delete(k);
+  GROUPS = { src: DIST, map };
+  return map;
+}
 function streetRank(st, n) {
   const k = skey(st), sn = norm(st);
   if (k === n) return 0;
@@ -47,6 +67,7 @@ function Search() {
   <div class="sec"><h3>محله / خیابان <small>(اسم محله یا خیابان را تایپ کنید)</small></h3>
     <div class="sugg" id="sel"></div>
     <input class="inp" id="dq" placeholder="مثلاً ارم، قصرالدشت، ابیوردی، چمران…" autocomplete="off" style="margin-top:8px">
+    <button class="sbtn" id="btnMap" style="margin-top:8px">🗺 یا روی نقشه محدوده بکشید</button>
     <div class="sugg" id="dsug"></div></div>
   <div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته' })}</div>
   <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b><div class="muted" style="font-size:13px">مشاورهای پنهان هم از روی متن کنار گذاشته می‌شوند</div></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
@@ -65,6 +86,7 @@ function Search() {
   pers.onclick = () => { haptic(); S.personal = !S.personal; pers.classList.toggle('on', S.personal); };
   minp.value = S.min_price ? money(S.min_price) : ''; maxp.value = S.max_price ? money(S.max_price) : ''; mina.value = S.min_area; maxa.value = S.max_area;
   drawSel(); dq.oninput = () => suggest(dq.value); suggest('');
+  btnMap.onclick = () => { haptic(); readInputs(); openAreaPicker(S.area, a => { S.area = a; drawSel(); }); };
   btnLive.onclick = () => submit('live'); btnStored.onclick = () => submit('stored');
   btnJobs.onclick = () => send({ v: 1, a: 'jobs' }, 'jobs'); btnHelp.onclick = () => send({ v: 1, a: 'help' }, 'help');
 }
@@ -76,17 +98,20 @@ function parseMoney(s) {
 function readInputs() { if (!window.minp) return; S.min_price = parseMoney(minp.value) || ''; S.max_price = parseMoney(maxp.value) || ''; S.min_area = parseMoney(mina.value) || ''; S.max_area = parseMoney(maxa.value) || ''; }
 function drawSel() {
   const chips = [];
-  S.streets.forEach(s => chips.push(`<button class="chip on x" data-kind="street" data-name="${esc(s.name)}">${esc(s.name)} · ${esc(s.district)}</button>`));
+  const label = s => s.name.endsWith('*') ? `${s.name.slice(0, -1)} (همه)` : `${s.name} · ${s.district}`;
+  S.streets.forEach(s => chips.push(`<button class="chip on x" data-kind="street" data-name="${esc(s.name)}">${esc(label(s))}</button>`));
   S.districts.forEach(d => {
-    if (S.streets.some(s => s.districtId == d[0])) return; // covered by a street chip
+    if (S.streets.some(s => (s.districtIds || [s.districtId]).includes(d[0]))) return; // covered by a street chip
     chips.push(`<button class="chip on x" data-kind="district" data-id="${d[0]}">${esc(d[1])}</button>`);
   });
-  const n = S.districts.length + S.streets.length;
+  if (S.area) chips.unshift(`<button class="chip on x" data-kind="area">${esc(areaLabel(S.area))}</button>`);
+  const n = S.districts.length + S.streets.length + (S.area ? 1 : 0);
   sel.innerHTML = n
     ? `<span class="muted" style="font-size:13px">${fa(n)} مورد (برای حذف بزنید):</span> ` + chips.join(' ')
     : '<span class="muted" style="font-size:13px">هیچ محله/خیابانی انتخاب نشده (= همه‌ی شیراز)</span>';
   sel.querySelectorAll('.chip').forEach(c => c.onclick = () => {
-    if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
+    if (c.dataset.kind === 'area') S.area = null;
+    else if (c.dataset.kind === 'street') S.streets = S.streets.filter(s => s.name !== c.dataset.name);
     else S.districts = S.districts.filter(d => d[0] != c.dataset.id);
     drawSel(); suggest(dq.value);
   });
@@ -114,6 +139,12 @@ function suggest(q) {
           hits.push({ kind: 'street', districtId: d[0], name: st, district: d[1], label: `${st} · ${d[1]}`, rank: r });
       }
     }
+    for (const [k, g] of streetGroups()) {
+      if (k !== n && !k.startsWith(n)) continue;
+      const ids = [...g.ids], names = DIST.filter(d => g.ids.has(d[0])).map(d => d[1]).join('، ');
+      hits.push({ kind: 'street', districtId: ids[0], districtIds: ids, name: g.name + '*', district: names,
+        label: `${g.name} (همه، ${g.members.size.toLocaleString('fa-IR')} کوچه/خیابان)`, rank: k === n ? -1 : 0.5 });
+    }
     hits.sort((a, b) => (a.rank - b.rank) || a.label.localeCompare(b.label, 'fa'));
   }
   hits = hits.filter(h => h.kind === 'street' ? !haveS.has(norm(h.name)) : !haveD.has(h.districtId)).slice(0, 15);
@@ -123,11 +154,11 @@ function suggest(q) {
     haptic();
     const h = hits[+c.dataset.i]; if (!h) return;
     if (h.kind === 'street') {
-      if (!S.streets.some(s => norm(s.name) === norm(h.name))) S.streets.push({ name: h.name, district: h.district, districtId: h.districtId });
-      if (!S.districts.some(d => d[0] === h.districtId)) {
-        const d = DIST.find(x => x[0] === h.districtId); if (d) S.districts.push(d);
+      if (!S.streets.some(s => norm(s.name) === norm(h.name))) S.streets.push({ name: h.name, district: h.district, districtId: h.districtId, districtIds: h.districtIds });
+      for (const id of h.districtIds || [h.districtId]) {
+        const d = DIST.find(x => x[0] === id); if (d && !S.districts.some(x => x[0] === id)) S.districts.push(d);
       }
-      toast(`✅ خیابان ${h.name} · ${h.district}`, 1800);
+      toast(`✅ ${h.name.endsWith('*') ? h.name.slice(0, -1) + ' (همه)' : 'خیابان ' + h.name + ' · ' + h.district}`, 1800);
     } else {
       const d = DIST.find(x => x[0] === h.districtId);
       if (d && !S.districts.some(x => x[0] === d[0])) S.districts.push(d);
@@ -143,6 +174,7 @@ function submit(mode) {
   const q = { v: 1, a: mode, deal: S.deal, ptype: S.ptype, d: S.districts.map(d => d[0]),
     streets: S.streets.map(s => s.name), w: S.window, p: S.personal ? 1 : 0, rep: mode === 'live' ? S.repeat : 0 };
   for (const k of ['min_price', 'max_price', 'min_area', 'max_area']) if (S[k]) q[k] = S[k];
+  if (S.area) q.area = S.area;
   if (link) { q.url = link; q.a = 'live'; }
   send(q, mode);
 }
@@ -171,7 +203,7 @@ async function inflate(b64) {
   const txt = await new Response(new Blob([bin]).stream().pipeThrough(ds)).text();
   return JSON.parse(txt);
 }
-const F = ['id', 'title', 'price', 'deposit', 'rent', 'area', 'rooms', 'floor', 'year', 'kind', 'deal', 'district', 'verdict', 'status', 'token', 'photo', 'deco'];
+const F = ['id', 'title', 'price', 'deposit', 'rent', 'area', 'rooms', 'floor', 'year', 'kind', 'deal', 'district', 'verdict', 'status', 'token', 'photo', 'deco', 'lat', 'lng'];
 function priceLine(i) {
   if (i.deal === 'فروش') return money(i.price) + ' تومان';
   const p = []; if (i.deposit != null) p.push('ودیعه ' + money(i.deposit)); if (i.rent) p.push('اجاره ' + money(i.rent)); return p.join(' · ') || money(i.price);
@@ -190,14 +222,21 @@ async function Results(b64) {
   const items = r.i.map(a => Object.fromEntries(F.map((k, n) => [k, a[n]])));
   items.forEach(i => { if (i.photo && !/^https?:/.test(i.photo)) i.photo = 'https://s100.divarcdn.com/static/photo/neda/webp_post/' + i.photo + '.webp'; });
   const st = {}; items.forEach(i => st[i.status] = (st[i.status] || 0) + 1);
-  let filt = 'all';
+  let filt = 'all', mapView = false;
+  const hasPoints = items.some(i => i.lat && i.lng);
+  const openListing = i => { const u = 'https://divar.ir/v/' + i.token; tg ? tg.openLink(u) : window.open(u); };
   const draw = () => {
     const show = items.filter(i => filt === 'all' || i.status === filt);
+    const body = mapView ? '<div id="resmap"></div><div class="muted pad" style="font-size:12px">جای نقطه‌ها تقریبی است (دیوار نقطه را تا حدود ۵۰۰ متر جابه‌جا نشان می‌دهد).</div>'
+      : show.map(card).join('') || '<div class="empty">آگهی‌ای نیست</div>';
     $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی${r.n > items.length ? ` · ${fa(items.length)} تای اول اینجا، همه در فایل اکسل/HTML چت` : ''}</p></div>
     <div class="stats"><button class="st ${filt === 'all' ? 'chip on' : ''}" data-f="all"><b>${fa(items.length)}</b>همه</button>${Object.entries(st).map(([s, n]) => `<button class="st" data-f="${esc(s)}" style="${filt === s ? 'outline:2px solid var(--btn)' : ''}"><b>${fa(n)}</b>${SL[s] || esc(s)}</button>`).join('')}</div>
-    ${show.map(card).join('') || '<div class="empty">آگهی‌ای نیست</div>'}
+    ${hasPoints ? `<div class="pad" style="padding-top:0"><button class="sbtn" id="btnView">${mapView ? '📋 فهرست' : '🗺 روی نقشه'}</button></div>` : ''}
+    ${body}
     <button class="big alt" id="btnNew">🔎 جستجوی جدید</button><div style="height:16px"></div>`;
     $app.querySelectorAll('.stats [data-f]').forEach(b => b.onclick = () => { filt = b.dataset.f; draw(); });
+    if (hasPoints) btnView.onclick = () => { haptic(); mapView = !mapView; draw(); };
+    if (mapView) showResultsMap(document.getElementById('resmap'), show, openListing);
     $app.querySelectorAll('.card .sbtn').forEach(b => b.onclick = ev => {
       ev.stopPropagation(); const c = b.closest('.card');
       if (b.dataset.a === 'o') { const u = 'https://divar.ir/v/' + c.dataset.t; tg ? tg.openLink(u) : window.open(u); }

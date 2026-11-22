@@ -57,3 +57,13 @@ button,input,select{font-family:inherit;font-size:inherit;color:inherit}
 .empty{text-align:center;padding:40px 20px;color:var(--hint);line-height:2}
 .empty .ic{font-size:44px}
 details summary{cursor:pointer;font-weight:700;list-style:none}details summary::before{content:'＋ ';color:var(--btn)}details[open] summary::before{content:'－ '}
+/* map */
+.mapbox{position:fixed;inset:0;z-index:50;background:var(--bg,#fff);display:flex;flex-direction:column}
+.mapbox #pickmap{flex:1}
+.maphint{padding:10px 12px;font-size:13px}
+.mapbar{display:flex;align-items:center;gap:10px;padding:8px 12px}
+.mapbar input{flex:1}
+.mapbtns{padding:0 12px 12px}
+.mapbtns .big{margin:0}
+#resmap{height:62vh;margin:0 12px;border-radius:12px;overflow:hidden}
+.leaflet-container{font-family:inherit}
