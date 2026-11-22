@@ -1,7 +1,9 @@
-// Map for the Mini App: pick a search area (tap a point + radius) and see results as dots.
-// Leaflet is shipped in vendor/ (CDNs are often blocked in Iran); tiles come from OpenStreetMap.
+// Map for the Mini App: draw one or more search areas (circles or freehand shapes) and see results
+// as dots. Leaflet is shipped in vendor/ (CDNs are often blocked in Iran); tiles: OpenStreetMap.
+// An area is {c: [lat, lng, radius_m]} or {p: [[lat, lng], ...]} (what the bot receives).
 const SHIRAZ = [29.6168, 52.5370];
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAX_AREAS = 6, MAX_POINTS = 24; // sendData is limited to 4 KB
 let leafletReady = null;
 
 function loadLeaflet() {
@@ -25,49 +27,89 @@ function baseMap(el, center, zoom) {
 }
 
 const meters = r => r >= 1000 ? `${(r / 1000).toLocaleString('fa-IR')} کیلومتر` : `${r.toLocaleString('fa-IR')} متر`;
+const STYLE = { color: '#2481cc', weight: 2, fillOpacity: 0.15 };
 
-/** Full-screen picker. area = [lat, lng, radius_m] or null; done(area|null). */
-async function openAreaPicker(area, done) {
+function shapeLayer(a) {
+  return a.c ? L.circle([a.c[0], a.c[1]], { ...STYLE, radius: a.c[2] }) : L.polygon(a.p, STYLE);
+}
+
+/** Keep every k-th point so a finger stroke stays small enough for Telegram's 4 KB data limit. */
+function simplify(pts) {
+  const step = Math.max(1, Math.ceil(pts.length / MAX_POINTS));
+  return pts.filter((_, i) => i % step === 0).map(p => [+p.lat.toFixed(5), +p.lng.toFixed(5)]);
+}
+
+/** Full-screen editor. areas: current list; done(list). */
+async function openAreaPicker(areas, done) {
   try { await loadLeaflet(); } catch (e) { toast('نقشه بارگذاری نشد؛ اینترنت را بررسی کنید'); return; }
+  let list = areas.slice(), mode = 'circle', layers = [];
   const box = document.createElement('div');
   box.className = 'mapbox';
-  box.innerHTML = `<div class="maphint">روی نقشه بزنید تا مرکز محدوده مشخص شود، بعد شعاع را تنظیم کنید.</div>
+  box.innerHTML = `<div class="mapmodes"><button class="chip on" data-m="circle">⭕ دایره</button><button class="chip" data-m="draw">✏️ کشیدن با انگشت</button>
+      <button class="chip" id="mapundo">↩️ حذف آخری</button></div>
+    <div class="maphint" id="maphint"></div>
     <div id="pickmap"></div>
-    <div class="mapbar"><input type="range" id="rad" min="200" max="3000" step="100" value="${area ? area[2] : 800}">
-      <span id="radl"></span></div>
-    <div class="row2 mapbtns"><button class="big" id="mapok">✅ تأیید محدوده</button><button class="big alt" id="mapno">لغو</button></div>`;
+    <div class="mapbar" id="radbar"><input type="range" id="rad" min="200" max="3000" step="100" value="800"><span id="radl"></span></div>
+    <div class="row2 mapbtns"><button class="big" id="mapok">✅ تأیید</button><button class="big alt" id="mapno">لغو</button></div>`;
   document.body.appendChild(box);
-  const map = baseMap('pickmap', area ? [area[0], area[1]] : SHIRAZ, area ? 14 : 12);
-  let circle = null;
-  const rad = box.querySelector('#rad'), radl = box.querySelector('#radl');
-  const draw = latlng => {
-    const r = +rad.value; radl.textContent = 'شعاع: ' + meters(r);
-    if (!latlng) return;
-    if (circle) circle.setLatLng(latlng).setRadius(r);
-    else circle = L.circle(latlng, { radius: r, color: '#2481cc', weight: 2, fillOpacity: 0.15 }).addTo(map);
+  const $ = s => box.querySelector(s);
+  const map = baseMap('pickmap', SHIRAZ, 12);
+  const redraw = () => {
+    layers.forEach(l => l.remove());
+    layers = list.map(a => shapeLayer(a).addTo(map));
+    $('#maphint').textContent = (mode === 'circle' ? 'روی نقشه بزنید: یک دایره با شعاع زیر اضافه می‌شود.'
+      : 'با انگشت دور محدوده را بکشید (نقشه در این حالت جابه‌جا نمی‌شود).') + ` — ${list.length.toLocaleString('fa-IR')} محدوده`;
+    $('#radl').textContent = 'شعاع: ' + meters(+$('#rad').value);
+    $('#radbar').style.display = mode === 'circle' ? 'flex' : 'none';
   };
-  if (area) draw(L.latLng(area[0], area[1])); else draw(null);
-  map.on('click', ev => { haptic(); draw(ev.latlng); });
-  rad.oninput = () => draw(circle && circle.getLatLng());
+  if (list.length) map.fitBounds(L.featureGroup(list.map(shapeLayer)).getBounds().pad(0.3));
+  const add = a => {
+    if (list.length >= MAX_AREAS) return toast(`حداکثر ${MAX_AREAS.toLocaleString('fa-IR')} محدوده`);
+    haptic(); list.push(a); redraw();
+  };
+  map.on('click', ev => { if (mode === 'circle') add({ c: [+ev.latlng.lat.toFixed(5), +ev.latlng.lng.toFixed(5), +$('#rad').value] }); });
+
+  // freehand: while drawing, the map does not pan; the finger stroke becomes a polygon
+  let stroke = null, line = null;
+  const el = map.getContainer();
+  const at = ev => map.mouseEventToLatLng(ev.touches ? ev.touches[0] : ev);
+  const start = ev => { if (mode !== 'draw') return; ev.preventDefault(); stroke = [at(ev)]; line = L.polyline(stroke, STYLE).addTo(map); };
+  const move = ev => { if (!stroke) return; ev.preventDefault(); stroke.push(at(ev)); line.setLatLngs(stroke); };
+  const end = () => {
+    if (!stroke) return;
+    line.remove();
+    if (stroke.length >= 6) add({ p: simplify(stroke) }); else toast('کمی بزرگ‌تر بکشید');
+    stroke = null;
+  };
+  el.addEventListener('touchstart', start, { passive: false }); el.addEventListener('touchmove', move, { passive: false });
+  el.addEventListener('touchend', end); el.addEventListener('mousedown', start); el.addEventListener('mousemove', move);
+  el.addEventListener('mouseup', end);
+
+  box.querySelectorAll('[data-m]').forEach(b => b.onclick = () => {
+    mode = b.dataset.m;
+    box.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x === b));
+    if (mode === 'draw') map.dragging.disable(); else map.dragging.enable();
+    redraw();
+  });
+  $('#rad').oninput = redraw;
+  $('#mapundo').onclick = () => { list.pop(); redraw(); };
   const close = v => { map.remove(); box.remove(); done(v); };
-  box.querySelector('#mapno').onclick = () => close(area);
-  box.querySelector('#mapok').onclick = () => {
-    if (!circle) return toast('اول روی نقشه یک نقطه بزنید');
-    const c = circle.getLatLng();
-    close([+c.lat.toFixed(5), +c.lng.toFixed(5), +rad.value]);
-  };
+  $('#mapno').onclick = () => close(areas);
+  $('#mapok').onclick = () => close(list);
+  redraw();
 }
 
 /** Results as dots (positions are approximate: Divar blurs most map points by ~500 m). */
-async function showResultsMap(el, items, onPick) {
+async function showResultsMap(el, items, onPick, areas) {
   try { await loadLeaflet(); } catch (e) { el.innerHTML = '<div class="empty">نقشه بارگذاری نشد</div>'; return; }
   const pts = items.filter(i => i.lat && i.lng);
   if (!pts.length) { el.innerHTML = '<div class="empty">هیچ‌کدام از این آگهی‌ها نقطه‌ی نقشه ندارند</div>'; return; }
   const map = baseMap(el, [pts[0].lat, pts[0].lng], 13);
+  (areas || []).forEach(a => shapeLayer(a).addTo(map));
   const group = L.featureGroup().addTo(map);
   for (const i of pts) {
     L.circleMarker([i.lat, i.lng], { radius: 8, color: '#fff', weight: 2, fillColor: i.status === 'مشاور' ? '#e5534b' : '#2481cc', fillOpacity: 0.9 })
-      .bindPopup(`<b>${esc(i.title)}</b><br>${priceLine(i)}<br><a href="#" data-t="${esc(i.token)}">دیدن آگهی ↗</a>`)
+      .bindPopup(`<b>${esc(i.title)}</b><br>${priceLine(i)}<br><a href="#">دیدن آگهی ↗</a>`)
       .on('popupopen', ev => { const a = ev.popup.getElement().querySelector('a'); if (a) a.onclick = e => { e.preventDefault(); onPick(i); }; })
       .addTo(group);
   }
@@ -75,4 +117,4 @@ async function showResultsMap(el, items, onPick) {
   return map;
 }
 
-const areaLabel = a => a ? `🗺 محدوده‌ی نقشه (${meters(a[2])})` : '';
+const areaLabel = a => a.c ? `⭕ ${meters(a.c[2])}` : '✏️ محدوده‌ی کشیده‌شده';
