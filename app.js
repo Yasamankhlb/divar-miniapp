@@ -109,21 +109,14 @@ let openLimit = 12;
 const startsWithDigit = s => /^[0-9۰-۹]/.test(s);
 const natural = (a, b) => (startsWithDigit(a) - startsWithDigit(b)) || a.localeCompare(b, 'fa', { numeric: true });
 const hasLetters = s => /[\u0600-\u06FFa-zA-Z]{2}/.test(s.replace(/[0-9۰-۹]/g, ''));
-/** Streets of the opened district in three sections: main streets (Divar's list + OSM main roads,
- *  DIST[i][5] of them lead the list), alleys grouped by their street («رادفر (همه، ۱۲)»), other alleys. */
+/** Main streets of a district (Divar's picker list + OSM main roads lead its list; DIST[i][5] of them). */
+function mainStreets(d) {
+  const all = streetParts(d[2]).filter(hasLetters);
+  return d[5] ? all.slice(0, d[5]) : all;
+}
 function districtStreets(d) {
-  const all = streetParts(d[2]).filter(hasLetters), nMain = d[5] || 0;
   const taken = new Set(S.streets.map(s => norm(s.name)));
-  const item = (name, label) => ({ name, label: label || name });
-  const groups = [...streetGroups().values()].filter(g => g.ids.has(d[0]));
-  const inGroup = new Set(groups.flatMap(g => [...g.members].map(norm)));
-  const main = all.slice(0, nMain).filter(st => !inGroup.has(norm(st)) || streetBase(st) === st).map(st => item(st));
-  const mainSet = new Set(main.map(x => norm(x.name)));
-  const grouped = groups.sort((a, b) => b.members.size - a.members.size || natural(a.name, b.name))
-    .map(g => item(g.name + '*', `${g.name} (همه، ${[...g.members].filter(m => streetParts(d[2]).includes(m)).length.toLocaleString('fa-IR')})`));
-  const others = all.slice(nMain).filter(st => !inGroup.has(norm(st)) && !mainSet.has(norm(st))).sort(natural).map(st => item(st));
-  const free = x => !taken.has(norm(x.name));
-  return [['خیابان‌های اصلی', main.filter(free)], ['کوچه‌ها به تفکیک خیابان', grouped.filter(free)], ['کوچه‌های دیگر', others.filter(free)]];
+  return [['خیابان‌های اصلی', mainStreets(d).filter(st => !taken.has(norm(st))).map(st => ({ name: st, label: st }))]];
 }
 function drawSel() {
   const chips = [];
@@ -181,17 +174,11 @@ function suggest(q) {
         hits.push({ kind: 'district', districtId: d[0], name: d[1], district: d[1], label: d[1], rank: dn === n ? 0 : dn.startsWith(n) ? 1 : 2 });
     }
     for (const d of DIST) {
-      for (const st of streetParts(d[2])) {
+      for (const st of mainStreets(d)) {  // main streets only: no alleys in search
         const r = streetRank(st, n);
         if (r >= 0)
           hits.push({ kind: 'street', districtId: d[0], name: st, district: d[1], label: `${st} · ${d[1]}`, rank: r });
       }
-    }
-    for (const [k, g] of streetGroups()) {
-      if (k !== n && !k.startsWith(n)) continue;
-      const ids = [...g.ids], names = DIST.filter(d => g.ids.has(d[0])).map(d => d[1]).join('، ');
-      hits.push({ kind: 'street', districtId: ids[0], districtIds: ids, name: g.name + '*', district: names,
-        label: `${g.name} (همه، ${g.members.size.toLocaleString('fa-IR')} کوچه/خیابان)`, rank: k === n ? -1 : 0.5 });
     }
     hits.sort((a, b) => (a.rank - b.rank) || a.label.localeCompare(b.label, 'fa'));
   }
