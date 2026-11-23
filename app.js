@@ -57,47 +57,130 @@ const sbadge = s => `<span class="b ${SC[s] || ''}">${SL[s] || esc(s)}</span>`;
 function seg(key, opts) {
   return `<div class="seg">` + Object.entries(opts).map(([k, v]) => `<button class="opt ${String(S[key]) === String(k) ? 'on' : ''}" data-k="${key}" data-v="${k}">${v}</button>`).join('') + `</div>`;
 }
+const WIZ = [
+  { title: 'نوع معامله', hint: 'فروش می‌خواهید، اجاره، یا رهن کامل؟' },
+  { title: 'نوع ملک', hint: 'چه ملکی را جستجو کنیم؟' },
+  { title: 'محله‌ها', hint: 'یک یا چند محله و خیابان را انتخاب کنید' },
+  { title: 'زمان و فیلترها', hint: 'بازه، آگهی شخصی، و در صورت تمایل قیمت' },
+  { title: 'تأیید و شروع', hint: 'انتخاب‌ها را یک‌بار دیگر ببینید، بعد شروع کنید' },
+];
+const DEAL_LBL = { sell: '🏷 فروش', rent: '🔑 اجاره', mortgage: '💰 رهن' };
+const TYPE_LBL = { any: 'همهٔ انواع ملک', apartment: '🏢 آپارتمان', villa: '🏡 ویلا / خانه', land: '🌱 زمین / کلنگی', commercial: '🏬 تجاری / اداری', building: '🏗 ساختمان کامل' };
+function goStep(n) {
+  const toastEl = document.getElementById('toast'); if (toastEl) toastEl.style.display = 'none';
+  S.step = Math.max(1, Math.min(5, n));
+  S.maxStep = Math.max(S.maxStep || 1, S.step);
+  Search();
+}
+function stepBar() {
+  const title = WIZ[S.step - 1];
+  const dots = [1, 2, 3, 4, 5].map(n =>
+    `<button type="button" class="dot ${n === S.step ? 'on' : ''} ${n < S.step ? 'done' : ''}" data-go="${n}" aria-label="مرحله ${n}" ${n > (S.maxStep || S.step) ? 'disabled' : ''}></button>`
+  ).join('');
+  return `<div class="steps">${dots}<span class="steplbl">${fa(S.step)} از ۵ — ${title.title}</span></div>
+    <div class="hdr"><h1>${S.editOf ? `✏️ ویرایش کار #${fa(S.editOf)}` : esc(title.title)}</h1><p>${title.hint}</p></div>`;
+}
+function dock(html) {
+  return `<div class="dock">${html}</div><div style="height:84px"></div>`;
+}
+function placeSummary() {
+  const bits = [
+    ...S.districts.map(d => d[1]),
+    ...S.streets.map(s => s.name.endsWith('*') ? s.name.slice(0, -1) + ' (همه)' : s.name),
+    ...S.areas.map(a => (typeof areaLabel === 'function' ? areaLabel(a) : 'محدوده')),
+  ];
+  return bits.length ? bits.join('، ') : 'همه‌ی محله‌های شیراز';
+}
+function timeSummary() {
+  if (S.window === 'custom' && S.range) return jLabel(S.range.from) + (S.range.to !== S.range.from ? ' تا ' + jLabel(S.range.to) : '');
+  return { '1d': 'امروز (۲۴ ساعت)', '3d': '۳ روز اخیر', '7d': '۱ هفته اخیر' }[S.window] || 'امروز';
+}
 function Search() {
-  const types = { any: 'همه', apartment: '🏢 آپارتمان', villa: '🏡 ویلا/خانه', land: '🌱 زمین/کلنگی', commercial: '🏬 تجاری/اداری', building: '🏗 ساختمان کامل' };
+  if (!S.step) S.step = S.editOf ? 5 : 1;
+  S.maxStep = Math.max(S.maxStep || 1, S.step);
+  const types = { any: 'همه', apartment: '🏢 آپارتمان', villa: '🏡 ویلا / خانه', land: '🌱 زمین / کلنگی', commercial: '🏬 تجاری / اداری', building: '🏗 ساختمان کامل' };
   const priceLbl = S.deal === 'sell' ? 'قیمت (تومان)' : 'ودیعه (تومان)';
-  $app.innerHTML = `<div class="hdr"><h1>${S.editOf ? `✏️ ویرایش کار #${fa(S.editOf)}` : '🔎 جستجوی آگهی ملک'}</h1></div>
-  <div class="sec"><h3>نوع معامله</h3>${seg('deal', { sell: '🏷 فروش', rent: '🔑 اجاره', mortgage: '💰 رهن' })}</div>
-  <div class="sec"><h3>نوع ملک</h3>${seg('ptype', types)}</div>
-  <div class="sec"><h3>محله / خیابان</h3>
-    <div class="sugg" id="sel"></div>
-    <input class="inp" id="dq" placeholder="مثلاً ارم، قصرالدشت، ابیوردی، چمران…" autocomplete="off" style="margin-top:8px">
-    <button class="sbtn" id="btnMap" style="margin-top:8px">🗺 روی نقشه</button>
-    <div class="sugg" id="dsug"></div></div>
-  <div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته', custom: S.range ? '📅 ' + jLabel(S.range.from) + (S.range.to !== S.range.from ? ' تا ' + jLabel(S.range.to) : '') : '📅 تقویم' })}</div>
-  <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
-  <div class="sec"><details ${S.min_price || S.max_price || S.min_area || S.max_area ? 'open' : ''}><summary>قیمت و متراژ</summary>
-    <div class="row2"><input class="inp" id="minp" placeholder="${priceLbl} از"><input class="inp" id="maxp" placeholder="تا"></div>
-    <div class="row2"><input class="inp" inputmode="numeric" id="mina" placeholder="متراژ از (متر)"><input class="inp" inputmode="numeric" id="maxa" placeholder="تا"></div></details></div>
-  <div class="sec"><h3>تکرار خودکار</h3>${seg('repeat', { 0: 'یک بار', 360: 'هر ۶ ساعت', 720: 'هر ۱۲ ساعت', 1440: 'روزانه' })}</div>
-  <div class="sec"><details><summary>یا لینک جستجوی دیوار</summary>
-    <textarea class="inp" id="url" rows="3" dir="ltr" style="margin-top:8px" placeholder="https://divar.ir/s/shiraz/buy-apartment?districts=522"></textarea></details></div>
-  <button class="big" id="btnLive">🚀 جستجوی تازه در دیوار</button>
-  <button class="big alt" id="btnStored">🗂 فقط از آگهی‌های ذخیره‌شده</button>
-  <div class="row2" style="padding:0 12px"><button class="big alt" style="margin:0;width:auto" id="btnJobs">🕘 کارها</button><button class="big alt" style="margin:0;width:auto" id="btnHelp">❓ راهنما</button></div><div style="height:16px"></div>`;
+  let body = '';
+  if (S.step === 1) {
+    body = `<div class="sec tight"><div class="seg col">${seg('deal', DEAL_LBL)}</div></div>`
+      + dock(`<button class="big" id="btnNext">ادامه</button>`);
+  } else if (S.step === 2) {
+    body = `<div class="sec tight"><div class="seg col">${seg('ptype', types)}</div></div>`
+      + dock(`<button class="sbtn" id="btnBack">بازگشت</button><button class="big" id="btnNext">ادامه</button>`);
+  } else if (S.step === 3) {
+    body = `<div class="sec"><div class="sugg" id="sel"></div>
+      <input class="inp" id="dq" placeholder="جستجوی محله یا خیابان، مثلاً قصرالدشت…" autocomplete="off" style="margin-top:8px">
+      <button class="sbtn" id="btnMap" style="margin-top:10px">🗺 انتخاب روی نقشه</button>
+      <div class="sugg" id="dsug"></div>
+      <p class="muted" style="font-size:12.5px;margin:10px 0 0">اگر محله‌ای نزنید، همه‌ی شیراز جستجو می‌شود. می‌توانید چند محله را با هم انتخاب کنید.</p></div>`
+      + dock(`<button class="sbtn" id="btnBack">بازگشت</button><button class="big" id="btnNext">ادامه</button>`);
+  } else if (S.step === 4) {
+    body = `<div class="sec"><h3>بازه‌ی زمانی</h3>${seg('window', { '1d': 'امروز', '3d': '۳ روز', '7d': '۱ هفته', custom: S.range ? '📅 ' + jLabel(S.range.from) + (S.range.to !== S.range.from ? ' تا ' + jLabel(S.range.to) : '') : '📅 تقویم' })}</div>
+      <div class="sec tog"><div><b>فقط آگهی‌های شخصی</b><div class="muted" style="font-size:12.5px;margin-top:2px">مشاورهای پنهان از روی متن کنار گذاشته می‌شوند</div></div><button class="sw ${S.personal ? 'on' : ''}" id="pers"></button></div>
+      <div class="sec"><details ${S.min_price || S.max_price || S.min_area || S.max_area ? 'open' : ''}><summary>قیمت و متراژ (اختیاری)</summary>
+        <div class="row2"><input class="inp" id="minp" placeholder="${priceLbl} از"><input class="inp" id="maxp" placeholder="تا"></div>
+        <div class="muted" style="font-size:12px;margin-top:4px">مثلاً «۵ میلیارد» یا «۸۰۰ میلیون»</div>
+        <div class="row2"><input class="inp" inputmode="numeric" id="mina" placeholder="متراژ از (متر)"><input class="inp" inputmode="numeric" id="maxa" placeholder="تا"></div></details></div>
+      <div class="sec"><h3>تکرار خودکار <small>فقط جستجوی تازه</small></h3>${seg('repeat', { 0: 'یک بار', 360: 'هر ۶ ساعت', 720: 'هر ۱۲ ساعت', 1440: 'روزانه' })}</div>
+      <div class="sec"><details><summary>یا لینک جستجوی دیوار</summary>
+        <textarea class="inp" id="url" rows="3" dir="ltr" style="margin-top:8px" placeholder="https://divar.ir/s/shiraz/buy-apartment?districts=522"></textarea></details></div>`
+      + dock(`<button class="sbtn" id="btnBack">بازگشت</button><button class="big" id="btnNext">ادامه</button>`);
+  } else {
+    const rows = [
+      ['معامله', DEAL_LBL[S.deal] || S.deal],
+      ['نوع ملک', TYPE_LBL[S.ptype] || S.ptype],
+      ['محله', placeSummary()],
+      ['بازه', timeSummary()],
+      ['آگهی‌دهنده', S.personal ? '👤 فقط شخصی' : 'همه'],
+    ];
+    if (S.min_price || S.max_price) rows.push(['قیمت / ودیعه', (S.min_price ? money(S.min_price) : '…') + ' تا ' + (S.max_price ? money(S.max_price) : '…')]);
+    if (S.min_area || S.max_area) rows.push(['متراژ', (S.min_area || '…') + ' تا ' + (S.max_area || '…') + ' متر']);
+    if (S.repeat) rows.push(['تکرار', ({ 360: 'هر ۶ ساعت', 720: 'هر ۱۲ ساعت', 1440: 'روزانه' })[S.repeat] || '']);
+    body = `<div class="sec"><div class="kv one">${rows.map(([k, v]) => `<div><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('')}</div></div>
+      <p class="muted pad" style="font-size:12.5px;line-height:1.8">🔒 شماره گرفته نمی‌شود و وارد حساب دیوار نمی‌شویم. بین صفحه‌ها حداقل ۸ ثانیه فاصله است.</p>`
+      + dock(`<button class="sbtn" id="btnBack">بازگشت</button><button class="big" id="btnLive">🚀 جستجوی تازه</button>`)
+      + `<button class="big alt" id="btnStored">🗂 فقط از آگهی‌های ذخیره‌شده</button>
+         <div class="row2" style="padding:0 12px 20px"><button class="sbtn" id="btnJobs">🕘 کارها</button><button class="sbtn" id="btnHelp">❓ راهنما</button></div>`;
+  }
+  $app.innerHTML = stepBar() + body;
+  $app.querySelectorAll('.dot[data-go]').forEach(b => b.onclick = () => { if (!b.disabled) { haptic(); readInputs(); goStep(+b.dataset.go); } });
   $app.querySelectorAll('.opt').forEach(b => b.onclick = () => {
     haptic(); readInputs();
     if (b.dataset.k === 'window' && b.dataset.v === 'custom')
       return openDateRange(S.range, r => { if (r) { S.range = r; S.window = 'custom'; } Search(); });
-    S[b.dataset.k] = b.dataset.k === 'repeat' ? +b.dataset.v : b.dataset.v; Search();
+    S[b.dataset.k] = b.dataset.k === 'repeat' ? +b.dataset.v : b.dataset.v;
+    if (S.step === 1 && b.dataset.k === 'deal') return goStep(2);
+    if (S.step === 2 && b.dataset.k === 'ptype') return goStep(3);
+    Search();
   });
-  pers.onclick = () => { haptic(); S.personal = !S.personal; pers.classList.toggle('on', S.personal); };
-  minp.value = S.min_price ? money(S.min_price) : ''; maxp.value = S.max_price ? money(S.max_price) : ''; mina.value = S.min_area; maxa.value = S.max_area;
-  drawSel(); dq.oninput = () => suggest(dq.value); suggest('');
-  btnMap.onclick = () => { haptic(); readInputs(); openAreaPicker(S.areas, a => { S.areas = a; drawSel(); }); };
-  btnLive.onclick = () => submit('live'); btnStored.onclick = () => submit('stored');
-  btnJobs.onclick = () => send({ v: 1, a: 'jobs' }, 'jobs'); btnHelp.onclick = () => send({ v: 1, a: 'help' }, 'help');
+  const back = document.getElementById('btnBack'), next = document.getElementById('btnNext');
+  if (back) back.onclick = () => { haptic(); readInputs(); goStep(S.step - 1); };
+  if (next) next.onclick = () => { haptic(); readInputs(); goStep(S.step + 1); };
+  if (window.pers) pers.onclick = () => { haptic(); S.personal = !S.personal; pers.classList.toggle('on', S.personal); };
+  if (window.minp) { minp.value = S.min_price ? money(S.min_price) : ''; maxp.value = S.max_price ? money(S.max_price) : ''; mina.value = S.min_area; maxa.value = S.max_area; }
+  const urlBox = document.getElementById('url'); if (urlBox && S.url) urlBox.value = S.url;
+  if (window.dq) { drawSel(); dq.oninput = () => suggest(dq.value); suggest(''); }
+  if (window.btnMap) btnMap.onclick = () => { haptic(); readInputs(); openAreaPicker(S.areas, a => { S.areas = a; drawSel(); }); };
+  if (window.btnLive) btnLive.onclick = () => submit('live');
+  if (window.btnStored) btnStored.onclick = () => submit('stored');
+  if (window.btnJobs) btnJobs.onclick = () => send({ v: 1, a: 'jobs' }, 'jobs');
+  if (window.btnHelp) btnHelp.onclick = () => send({ v: 1, a: 'help' }, 'help');
 }
 function parseMoney(s) {
   if (!s) return ''; s = String(s).replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[,،\s]/g, '');
   let m = 1; if (/میلیارد/.test(s)) m = 1e9; else if (/میلیون/.test(s)) m = 1e6; else if (/هزار/.test(s)) m = 1e3;
   const n = parseFloat(s.replace(/[^\d.]/g, '')); return isNaN(n) ? '' : Math.round(n * m);
 }
-function readInputs() { if (!window.minp) return; S.min_price = parseMoney(minp.value) || ''; S.max_price = parseMoney(maxp.value) || ''; S.min_area = parseMoney(mina.value) || ''; S.max_area = parseMoney(maxa.value) || ''; }
+function readInputs() {
+  if (window.minp) {
+    S.min_price = parseMoney(minp.value) || '';
+    S.max_price = parseMoney(maxp.value) || '';
+    S.min_area = parseMoney(mina.value) || '';
+    S.max_area = parseMoney(maxa.value) || '';
+  }
+  const box = document.getElementById('url');
+  if (box) S.url = (box.value || '').trim();
+}
 function addStreet(h) {
   if (!S.streets.some(s => norm(s.name) === norm(h.name))) S.streets.push({ name: h.name, district: h.district, districtId: h.districtId, districtIds: h.districtIds });
   for (const id of h.districtIds || [h.districtId]) {
@@ -201,7 +284,7 @@ function suggest(q) {
 }
 function submit(mode) {
   readInputs();
-  const box = document.getElementById('url'), link = (box && box.value || '').trim();
+  const link = (S.url || '').trim();
   if (link && !/divar\.ir\/s\//.test(link)) return toast('لینک باید شبیه divar.ir/s/shiraz/… باشد');
   const q = { v: 1, a: mode, deal: S.deal, ptype: S.ptype, d: S.districts.map(d => d[0]),
     streets: S.streets.map(s => s.name), w: S.window, p: S.personal ? 1 : 0, rep: mode === 'live' ? S.repeat : 0 };
@@ -314,7 +397,7 @@ async function sendZip(ids, title) {
 }
 
 async function Results(b64) {
-  let r; try { r = await inflate(b64); } catch (e) { $app.innerHTML = '<div class="empty"><div class="ic">⚠️</div>این لینک نتیجه خراب است. جستجو را دوباره بزنید.</div>'; return; }
+  let r; try { r = await inflate(b64); } catch (e) { $app.innerHTML = '<div class="empty"><div class="ic">⚠️</div>این لینک نتیجه خراب است.<br>از بات دوباره جستجو کنید یا صفحه را ببندید.</div>'; return; }
   const items = r.i.map(a => Object.fromEntries(F.map((k, n) => [k, a[n]])));
   items.forEach(i => { if (i.photo && !/^https?:/.test(i.photo)) i.photo = 'https://s100.divarcdn.com/static/photo/neda/webp_post/' + i.photo + '.webp'; });
   const st = {}; items.forEach(i => st[i.status] = (st[i.status] || 0) + 1);
@@ -326,16 +409,16 @@ async function Results(b64) {
     const show = items.filter(i => filt === 'all' || i.status === filt);
     const nPick = picked.size;
     const body = mapView ? '<div id="resmap"></div><div class="muted pad" style="font-size:12px">جای نقطه‌ها تقریبی است (دیوار نقطه را تا حدود ۵۰۰ متر جابه‌جا نشان می‌دهد).</div>'
-      : show.map(i => card(i, picked)).join('') || '<div class="empty">آگهی‌ای نیست</div>';
-    $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی · تیک بزنید، بعد خروجی زیپ بگیرید (یا شماره به پنل)${r.n > items.length ? ` · ${fa(items.length)} تای اول اینجا` : ''}</p></div>
+      : show.map(i => card(i, picked)).join('') || '<div class="empty"><div class="ic" style="opacity:.7">🫙</div>آگهی‌ای با این فیلتر پیدا نشد.<br>بازگردید و فیلترها را کمی بازتر کنید.</div>';
+    $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی${r.n > items.length ? ` · ${fa(items.length)} تای اول` : ''} — برای خروجی، آگهی را تیک بزنید</p></div>
     <div class="stats"><button class="st ${filt === 'all' ? 'chip on' : ''}" data-f="all"><b>${fa(items.length)}</b>همه</button>${Object.entries(st).map(([s, n]) => `<button class="st" data-f="${esc(s)}" style="${filt === s ? 'outline:2px solid var(--btn)' : ''}"><b>${fa(n)}</b>${SL[s] || esc(s)}</button>`).join('')}</div>
     ${hasPoints ? `<div class="pad" style="padding-top:0"><button class="sbtn" id="btnView">${mapView ? '📋 فهرست' : '🗺 روی نقشه'}</button></div>` : ''}
     ${body}
     <button class="big alt" id="btnNew">🔎 جستجوی جدید</button>
     <div class="pickbar">
-      <button class="sbtn" id="btnAll">${nPick && nPick === show.length ? 'پاک کردن انتخاب' : '☑️ انتخاب همه'}</button>
-      <button class="big" id="btnZip" ${nPick ? '' : 'disabled'}>📦 خروجی زیپ (${nPick ? fa(nPick) : '۰'})</button>
-      <button class="big alt" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 شماره به پنل</button>
+      <button class="sbtn" id="btnAll">${nPick && nPick === show.length ? 'لغو انتخاب' : 'انتخاب همه'}</button>
+      <button class="big" id="btnZip" ${nPick ? '' : 'disabled'}>انتخاب شده: ${fa(nPick)} · خروجی زیپ</button>
+      <button class="sbtn" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 شماره به پنل</button>
     </div>
     <div style="height:8px"></div>`;
     $app.querySelectorAll('.stats [data-f]').forEach(b => b.onclick = () => { filt = b.dataset.f; draw(); });
