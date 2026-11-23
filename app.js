@@ -50,6 +50,7 @@ const fromKeyboard = () => tg && !tg.initData && tg.platform !== 'unknown';
 const VC = { 'داخل محله': 'v-in', 'مرزی': 'v-edge', 'خارج': 'v-out', 'تعارض': 'v-conf', 'نامشخص': 'v-unk' };
 const SC = { 'شخصی ✔': 's-ok', 'مشاور': 's-ag', 'بررسی': 's-rev', 'خارج از محله': 's-out' };
 const SL = { 'شخصی ✔': '👤 شخصی', 'مشاور': '🏢 مشاور', 'بررسی': '🔍 نیاز به بررسی', 'خارج از محله': '📍 خارج از محله' };
+const ST_LBL = { 'شخصی ✔': '👤 شخصی', 'مشاور': '🏢 مشاور', 'بررسی': '🔍 بررسی', 'خارج از محله': '📍 خارج' };
 const vbadge = v => v ? `<span class="b ${VC[v] || 'v-unk'}">📍 ${esc(v)}</span>` : '';
 const sbadge = s => `<span class="b ${SC[s] || ''}">${SL[s] || esc(s)}</span>`;
 
@@ -348,9 +349,20 @@ function priceLine(i) {
   if (i.deal === 'فروش') return money(i.price) + ' تومان';
   const p = []; if (i.deposit != null) p.push('ودیعه ' + money(i.deposit)); if (i.rent) p.push('اجاره ' + money(i.rent)); return p.join(' · ') || money(i.price);
 }
+function photoSrc(p) {
+  if (p == null) return '';
+  p = String(p).trim();
+  if (!p) return '';
+  if (/^(https?:\/\/|data:|blob:)/i.test(p)) return p;
+  if (p.startsWith('/') || p.startsWith('./') || p.startsWith('../')) return p; // /media/… or local
+  return 'https://s100.divarcdn.com/static/photo/neda/webp_post/' + p + '.webp';
+}
 function card(i, picked) {
   const on = picked.has(+i.id);
-  const ph = i.photo ? `<img loading="lazy" src="${esc(i.photo)}" onerror="this.remove()">` : '🏠';
+  const src = photoSrc(i.photo);
+  const ph = src
+    ? `<img loading="lazy" src="${esc(src)}" alt="" onerror="this.replaceWith(document.createTextNode('🏠'))">`
+    : '🏠';
   const m = [i.area ? fa(i.area) + ' متر' : '', i.rooms != null ? fa(i.rooms) + ' خواب' : '', i.floor != null ? 'طبقه ' + fa(i.floor) : '', i.year ? 'ساخت ' + fa(i.year) : ''].filter(Boolean).join(' · ');
   return `<div class="card ${on ? 'on' : ''}" data-t="${esc(i.token)}" data-id="${i.id}" role="checkbox" aria-checked="${on}">
   <div class="pick" aria-hidden="true">${on ? '✓' : ''}</div>
@@ -358,7 +370,7 @@ function card(i, picked) {
   <div class="t">${esc(i.title)}</div><div class="price">${priceLine(i)}</div>
   <div class="meta">${esc(i.kind)} · ${esc(i.deal)} · ${esc(i.district || '')}<br>${m}</div>
   <div>${sbadge(i.status)}${vbadge(i.verdict)}</div>
-  <div class="acts" style="display:flex;gap:6px;margin-top:6px"><button class="sbtn" data-a="d">🔎 جزئیات در چت</button><button class="sbtn" data-a="o">دیوار ↗</button></div></div></div>`;
+  <div class="acts"><button class="sbtn" data-a="d">🔎 جزئیات</button><button class="sbtn" data-a="o">دیوار ↗</button></div></div></div>`;
 }
 
 /** Hand selected listing ids to the bot (queue phone reveals → web panel). */
@@ -399,7 +411,7 @@ async function sendZip(ids, title) {
 async function Results(b64) {
   let r; try { r = await inflate(b64); } catch (e) { $app.innerHTML = '<div class="empty"><div class="ic">⚠️</div>این لینک نتیجه خراب است.<br>از بات دوباره جستجو کنید یا صفحه را ببندید.</div>'; return; }
   const items = r.i.map(a => Object.fromEntries(F.map((k, n) => [k, a[n]])));
-  items.forEach(i => { if (i.photo && !/^https?:/.test(i.photo)) i.photo = 'https://s100.divarcdn.com/static/photo/neda/webp_post/' + i.photo + '.webp'; });
+  items.forEach(i => { i.photo = photoSrc(i.photo); });
   const st = {}; items.forEach(i => st[i.status] = (st[i.status] || 0) + 1);
   let filt = 'all', mapView = false;
   const picked = new Set(); // listing ids the user ticks for phone → panel
@@ -411,16 +423,17 @@ async function Results(b64) {
     const body = mapView ? '<div id="resmap"></div><div class="muted pad" style="font-size:12px">جای نقطه‌ها تقریبی است (دیوار نقطه را تا حدود ۵۰۰ متر جابه‌جا نشان می‌دهد).</div>'
       : show.map(i => card(i, picked)).join('') || '<div class="empty"><div class="ic" style="opacity:.7">🫙</div>آگهی‌ای با این فیلتر پیدا نشد.<br>بازگردید و فیلترها را کمی بازتر کنید.</div>';
     $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی${r.n > items.length ? ` · ${fa(items.length)} تای اول` : ''} — برای خروجی، آگهی را تیک بزنید</p></div>
-    <div class="stats"><button class="st ${filt === 'all' ? 'chip on' : ''}" data-f="all"><b>${fa(items.length)}</b>همه</button>${Object.entries(st).map(([s, n]) => `<button class="st" data-f="${esc(s)}" style="${filt === s ? 'outline:2px solid var(--btn)' : ''}"><b>${fa(n)}</b>${SL[s] || esc(s)}</button>`).join('')}</div>
+    <div class="stats"><button class="st ${filt === 'all' ? 'on' : ''}" data-f="all"><b>${fa(items.length)}</b> همه</button>${Object.entries(st).map(([s, n]) => `<button class="st ${filt === s ? 'on' : ''}" data-f="${esc(s)}"><b>${fa(n)}</b> ${ST_LBL[s] || SL[s] || esc(s)}</button>`).join('')}</div>
     ${hasPoints ? `<div class="pad" style="padding-top:0"><button class="sbtn" id="btnView">${mapView ? '📋 فهرست' : '🗺 روی نقشه'}</button></div>` : ''}
     ${body}
     <button class="big alt" id="btnNew">🔎 جستجوی جدید</button>
     <div class="pickbar">
-      <button class="sbtn" id="btnAll">${nPick && nPick === show.length ? 'لغو انتخاب' : 'انتخاب همه'}</button>
       <button class="big" id="btnZip" ${nPick ? '' : 'disabled'}>انتخاب شده: ${fa(nPick)} · خروجی زیپ</button>
-      <button class="sbtn" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 شماره به پنل</button>
-    </div>
-    <div style="height:8px"></div>`;
+      <div class="pickrow">
+        <button class="sbtn" id="btnAll">${nPick && nPick === show.length ? 'لغو انتخاب' : 'انتخاب همه'}</button>
+        <button class="sbtn" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 شماره به پنل</button>
+      </div>
+    </div>`;
     $app.querySelectorAll('.stats [data-f]').forEach(b => b.onclick = () => { filt = b.dataset.f; draw(); });
     if (hasPoints) btnView.onclick = () => { haptic(); mapView = !mapView; draw(); };
     if (mapView) showResultsMap(document.getElementById('resmap'), show, openListing);
