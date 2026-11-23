@@ -1,9 +1,8 @@
-/* دیوار‌یار — static Telegram Mini App (no backend).
-   Search mode: builds a search and hands it to the bot through Telegram itself:
-     - opened from the chat keyboard button -> Telegram.WebApp.sendData(JSON)
-     - opened from the menu / an inline button -> t.me/<bot>?start=<compact code>
-   Results mode (#data=...): shows a compact, compressed result list the bot put in the URL fragment.
-   Contains no token, no data and no owner id; the bot checks who sent the request. */
+/* دیوار‌یار — static Telegram Mini App (no secrets in the client).
+   Search → bot:
+     - keyboard button → Telegram.WebApp.sendData(JSON)
+     - menu / inline → short ?start= code, or POST /pending then ?start=p_<id> for streets/areas
+   Results (#data=...): compressed list the bot put in the URL fragment. */
 const tg = window.Telegram ? Telegram.WebApp : null;
 const BOT = 'DivarMaava_bot';
 const $app = document.getElementById('app');
@@ -223,15 +222,35 @@ function startCode(q) {
   const code = 'q' + (q.a === 'live' ? 'L' : 'S') + DEAL_C[q.deal] + TYPE_C[q.ptype] + WIN_C[q.w] + q.p + REP_C[q.rep || 0] + '_' + q.d.map(i => i.toString(36)).join('-') + '_' + [m(q.min_price), m(q.max_price), ar(q.min_area), ar(q.max_area)].join('_');
   return code.length <= 64 ? code : null;
 }
-function send(q, mode) {
+const PENDING = 'https://drbarzanouni.cartamed.homes/webhook/divar-pending';
+async function send(q, mode) {
   haptic('medium');
-  if (fromKeyboard()) { tg.sendData(JSON.stringify(q)); return; } // the app closes; the bot answers in chat
+  // Keyboard-button launch: Telegram.WebApp.sendData (app closes; bot answers in chat).
+  if (fromKeyboard()) { tg.sendData(JSON.stringify(q)); return; }
+  // Compact searches fit in ?start= (≤64 chars).
   const code = startCode(q);
   if (code && tg) { tg.openTelegramLink(`https://t.me/${BOT}?start=${code}`); setTimeout(() => tg.close(), 400); return; }
   if (code) { location.href = `https://t.me/${BOT}?start=${code}`; return; }
-  // Only the chat-keyboard launch can hand the whole search to the bot: keep the choices for then.
-  try { localStorage.setItem('dy_draft', JSON.stringify(S)); } catch (e) { }
-  toast('خیابان و محدوده‌ی نقشه فقط وقتی فرستاده می‌شود که برنامه را از دکمه‌ی «📱 جستجو با مینی‌اپ» پایین چت باز کنید. انتخاب‌هایتان ذخیره شد؛ از آن دکمه باز کنید و دوباره بزنید.', 8000);
+  // Menu / inline launch with streets or map areas: park the full query on the bot, then deep-link.
+  if (tg && tg.initData) {
+    try {
+      toast('⏳ در حال ارسال…', 4000);
+      const r = await fetch(PENDING, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+        body: JSON.stringify(q),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.id) throw new Error(j.error || ('http ' + r.status));
+      tg.openTelegramLink(`https://t.me/${BOT}?start=p_${j.id}`);
+      setTimeout(() => tg.close(), 400);
+      return;
+    } catch (err) {
+      toast('ارسال نشد؛ دوباره امتحان کنید یا از دکمه‌ی جستجو پایین چت باز کنید.', 5000);
+      return;
+    }
+  }
+  toast('برای ارسال جستجو، برنامه را از تلگرام باز کنید.', 4000);
 }
 
 // ---------------------------------------------------------------- results viewer (#data=)
@@ -246,32 +265,60 @@ function priceLine(i) {
   if (i.deal === 'فروش') return money(i.price) + ' تومان';
   const p = []; if (i.deposit != null) p.push('ودیعه ' + money(i.deposit)); if (i.rent) p.push('اجاره ' + money(i.rent)); return p.join(' · ') || money(i.price);
 }
-function card(i) {
+function card(i, picked) {
+  const on = picked.has(+i.id);
   const ph = i.photo ? `<img loading="lazy" src="${esc(i.photo)}" onerror="this.remove()">` : '🏠';
   const m = [i.area ? fa(i.area) + ' متر' : '', i.rooms != null ? fa(i.rooms) + ' خواب' : '', i.floor != null ? 'طبقه ' + fa(i.floor) : '', i.year ? 'ساخت ' + fa(i.year) : ''].filter(Boolean).join(' · ');
-  return `<div class="card" data-t="${esc(i.token)}" data-id="${i.id}"><div class="im">${ph}${i.deco ? '<span class="dec">تزئینی</span>' : ''}</div><div class="bd">
+  return `<div class="card ${on ? 'on' : ''}" data-t="${esc(i.token)}" data-id="${i.id}" role="checkbox" aria-checked="${on}">
+  <div class="pick" aria-hidden="true">${on ? '✓' : ''}</div>
+  <div class="im">${ph}${i.deco ? '<span class="dec">تزئینی</span>' : ''}</div><div class="bd">
   <div class="t">${esc(i.title)}</div><div class="price">${priceLine(i)}</div>
   <div class="meta">${esc(i.kind)} · ${esc(i.deal)} · ${esc(i.district || '')}<br>${m}</div>
   <div>${sbadge(i.status)}${vbadge(i.verdict)}</div>
   <div class="acts" style="display:flex;gap:6px;margin-top:6px"><button class="sbtn" data-a="d">🔎 جزئیات در چت</button><button class="sbtn" data-a="o">دیوار ↗</button></div></div></div>`;
 }
+
+/** Hand selected listing ids to the bot (queue phone reveals → web panel). */
+async function sendPhonePick(ids) {
+  const payload = { a: 'phones', ids };
+  if (fromKeyboard()) { tg.sendData(JSON.stringify(payload)); return; }
+  if (!tg || !tg.initData) { toast('برای ارسال، برنامه را از تلگرام باز کنید.', 4000); return; }
+  try {
+    const r = await fetch(PENDING, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': tg.initData },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.id) throw new Error(j.error || ('http ' + r.status));
+    tg.openTelegramLink(`https://t.me/${BOT}?start=p_${j.id}`);
+    setTimeout(() => tg.close(), 400);
+  } catch (err) {
+    toast('ارسال نشد؛ دوباره امتحان کنید.', 4000);
+  }
+}
+
 async function Results(b64) {
   let r; try { r = await inflate(b64); } catch (e) { $app.innerHTML = '<div class="empty"><div class="ic">⚠️</div>این لینک نتیجه خراب است. جستجو را دوباره بزنید.</div>'; return; }
   const items = r.i.map(a => Object.fromEntries(F.map((k, n) => [k, a[n]])));
   items.forEach(i => { if (i.photo && !/^https?:/.test(i.photo)) i.photo = 'https://s100.divarcdn.com/static/photo/neda/webp_post/' + i.photo + '.webp'; });
   const st = {}; items.forEach(i => st[i.status] = (st[i.status] || 0) + 1);
   let filt = 'all', mapView = false;
+  const picked = new Set(); // listing ids the user ticks for phone → panel
   const hasPoints = items.some(i => i.lat && i.lng);
   const openListing = i => { const u = 'https://divar.ir/v/' + i.token; tg ? tg.openLink(u) : window.open(u); };
   const draw = () => {
     const show = items.filter(i => filt === 'all' || i.status === filt);
+    const nPick = picked.size;
     const body = mapView ? '<div id="resmap"></div><div class="muted pad" style="font-size:12px">جای نقطه‌ها تقریبی است (دیوار نقطه را تا حدود ۵۰۰ متر جابه‌جا نشان می‌دهد).</div>'
-      : show.map(card).join('') || '<div class="empty">آگهی‌ای نیست</div>';
-    $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی${r.n > items.length ? ` · ${fa(items.length)} تای اول اینجا، همه در فایل اکسل/HTML چت` : ''}</p></div>
+      : show.map(i => card(i, picked)).join('') || '<div class="empty">آگهی‌ای نیست</div>';
+    $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی · تیک بزنید، بعد شماره به پنل می‌رود${r.n > items.length ? ` · ${fa(items.length)} تای اول اینجا` : ''}</p></div>
     <div class="stats"><button class="st ${filt === 'all' ? 'chip on' : ''}" data-f="all"><b>${fa(items.length)}</b>همه</button>${Object.entries(st).map(([s, n]) => `<button class="st" data-f="${esc(s)}" style="${filt === s ? 'outline:2px solid var(--btn)' : ''}"><b>${fa(n)}</b>${SL[s] || esc(s)}</button>`).join('')}</div>
     ${hasPoints ? `<div class="pad" style="padding-top:0"><button class="sbtn" id="btnView">${mapView ? '📋 فهرست' : '🗺 روی نقشه'}</button></div>` : ''}
     ${body}
-    <button class="big alt" id="btnNew">🔎 جستجوی جدید</button><div style="height:16px"></div>`;
+    <button class="big alt" id="btnNew">🔎 جستجوی جدید</button>
+    <div class="pickbar"><button class="big" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 افزودن ${nPick ? fa(nPick) + ' شماره' : 'شماره'} به پنل</button></div>
+    <div style="height:8px"></div>`;
     $app.querySelectorAll('.stats [data-f]').forEach(b => b.onclick = () => { filt = b.dataset.f; draw(); });
     if (hasPoints) btnView.onclick = () => { haptic(); mapView = !mapView; draw(); };
     if (mapView) showResultsMap(document.getElementById('resmap'), show, openListing);
@@ -280,7 +327,19 @@ async function Results(b64) {
       if (b.dataset.a === 'o') { const u = 'https://divar.ir/v/' + c.dataset.t; tg ? tg.openLink(u) : window.open(u); }
       else { const u = `https://t.me/${BOT}?start=d_${c.dataset.id}`; tg ? (tg.openTelegramLink(u), setTimeout(() => tg.close(), 400)) : (location.href = u); }
     });
-    $app.querySelectorAll('.card').forEach(c => c.onclick = () => { const u = 'https://divar.ir/v/' + c.dataset.t; tg ? tg.openLink(u) : window.open(u); });
+    $app.querySelectorAll('.card').forEach(c => c.onclick = () => {
+      if (mapView) return;
+      const id = +c.dataset.id;
+      if (picked.has(id)) picked.delete(id); else picked.add(id);
+      haptic(); draw();
+    });
+    btnPhones.onclick = async () => {
+      if (!picked.size) return;
+      const ids = [...picked];
+      btnPhones.disabled = true;
+      toast(`صف ${fa(ids.length)} شماره…`);
+      await sendPhonePick(ids);
+    };
     btnNew.onclick = async () => { try { sessionStorage.removeItem('dy_data') } catch (e) { } history.replaceState(null, '', location.pathname); if (!DIST.length) { try { DIST = await (await fetch('districts.json?v=3')).json(); } catch (e) { } } Search(); };
   };
   draw();
