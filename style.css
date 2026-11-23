@@ -30,8 +30,12 @@ button,input,select{font-family:inherit;font-size:inherit;color:inherit}
 .big:disabled{opacity:.5}
 .stats{display:flex;gap:8px;overflow-x:auto;padding:8px 12px}
 .st{background:var(--card);border-radius:12px;padding:8px 12px;white-space:nowrap;font-size:13px}.st b{font-size:17px;margin-left:4px}
-.card{display:flex;gap:12px;background:var(--card);margin:10px 12px;border-radius:var(--r);padding:10px;box-shadow:0 1px 3px #0001;cursor:pointer}
+.card{display:flex;gap:10px;background:var(--card);margin:10px 12px;border-radius:var(--r);padding:10px;box-shadow:0 1px 3px #0001;cursor:pointer;align-items:flex-start}
+.card.on{box-shadow:inset 0 0 0 2px var(--btn)}
+.card .pick{width:22px;height:22px;border-radius:7px;border:1.5px solid #8a94a688;flex:none;margin-top:4px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--btx);background:transparent}
+.card.on .pick{background:var(--btn);border-color:var(--btn)}
 .card .im{width:104px;height:104px;border-radius:12px;object-fit:cover;background:var(--sbg);flex:none;display:flex;align-items:center;justify-content:center;font-size:30px;position:relative;overflow:hidden}
+.pickbar{position:sticky;bottom:0;padding:8px 0 4px;background:linear-gradient(transparent,var(--sbg) 28%);z-index:5}
 .card .im img{width:100%;height:100%;object-fit:cover}
 .card .im .dec{position:absolute;bottom:4px;right:4px;background:#c2410ccc;color:#fff;font-size:10px;border-radius:99px;padding:1px 6px}
 .card .bd{flex:1;min-width:0}.card .t{font-weight:700;line-height:1.6;margin-bottom:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
