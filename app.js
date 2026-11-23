@@ -298,6 +298,21 @@ async function sendPhonePick(ids) {
   }
 }
 
+function packZipStart(ids) {
+  const code = 'z_' + ids.map(i => (+i).toString(36)).join('-');
+  return code.length <= 64 ? code : null;
+}
+async function sendZip(ids, title) {
+  if (!ids.length) return toast('اول آگهی‌ها را انتخاب کنید');
+  haptic('medium');
+  const payload = { v: 1, a: 'zip', ids, title: title || 'خروجی انتخاب‌شده' };
+  if (fromKeyboard()) { tg.sendData(JSON.stringify(payload)); return; }
+  const code = packZipStart(ids);
+  if (code && tg) { tg.openTelegramLink(`https://t.me/${BOT}?start=${code}`); setTimeout(() => tg.close(), 400); return; }
+  if (code) { location.href = `https://t.me/${BOT}?start=${code}`; return; }
+  toast('تعداد انتخاب‌ها برای لینک کوتاه زیاد است. مینی‌اپ را از دکمه‌ی جستجو پایین چت باز کنید، یا در چت بفرستید: /zip ' + ids.join(' '), 7000);
+}
+
 async function Results(b64) {
   let r; try { r = await inflate(b64); } catch (e) { $app.innerHTML = '<div class="empty"><div class="ic">⚠️</div>این لینک نتیجه خراب است. جستجو را دوباره بزنید.</div>'; return; }
   const items = r.i.map(a => Object.fromEntries(F.map((k, n) => [k, a[n]])));
@@ -312,12 +327,16 @@ async function Results(b64) {
     const nPick = picked.size;
     const body = mapView ? '<div id="resmap"></div><div class="muted pad" style="font-size:12px">جای نقطه‌ها تقریبی است (دیوار نقطه را تا حدود ۵۰۰ متر جابه‌جا نشان می‌دهد).</div>'
       : show.map(i => card(i, picked)).join('') || '<div class="empty">آگهی‌ای نیست</div>';
-    $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی · تیک بزنید، بعد شماره به پنل می‌رود${r.n > items.length ? ` · ${fa(items.length)} تای اول اینجا` : ''}</p></div>
+    $app.innerHTML = `<div class="hdr"><h1>${esc(r.t)}</h1><p>${fa(r.n)} آگهی · تیک بزنید، بعد خروجی زیپ بگیرید (یا شماره به پنل)${r.n > items.length ? ` · ${fa(items.length)} تای اول اینجا` : ''}</p></div>
     <div class="stats"><button class="st ${filt === 'all' ? 'chip on' : ''}" data-f="all"><b>${fa(items.length)}</b>همه</button>${Object.entries(st).map(([s, n]) => `<button class="st" data-f="${esc(s)}" style="${filt === s ? 'outline:2px solid var(--btn)' : ''}"><b>${fa(n)}</b>${SL[s] || esc(s)}</button>`).join('')}</div>
     ${hasPoints ? `<div class="pad" style="padding-top:0"><button class="sbtn" id="btnView">${mapView ? '📋 فهرست' : '🗺 روی نقشه'}</button></div>` : ''}
     ${body}
     <button class="big alt" id="btnNew">🔎 جستجوی جدید</button>
-    <div class="pickbar"><button class="big" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 افزودن ${nPick ? fa(nPick) + ' شماره' : 'شماره'} به پنل</button></div>
+    <div class="pickbar">
+      <button class="sbtn" id="btnAll">${nPick && nPick === show.length ? 'پاک کردن انتخاب' : '☑️ انتخاب همه'}</button>
+      <button class="big" id="btnZip" ${nPick ? '' : 'disabled'}>📦 خروجی زیپ (${nPick ? fa(nPick) : '۰'})</button>
+      <button class="big alt" id="btnPhones" ${nPick ? '' : 'disabled'}>📞 شماره به پنل</button>
+    </div>
     <div style="height:8px"></div>`;
     $app.querySelectorAll('.stats [data-f]').forEach(b => b.onclick = () => { filt = b.dataset.f; draw(); });
     if (hasPoints) btnView.onclick = () => { haptic(); mapView = !mapView; draw(); };
@@ -333,6 +352,12 @@ async function Results(b64) {
       if (picked.has(id)) picked.delete(id); else picked.add(id);
       haptic(); draw();
     });
+    btnAll.onclick = () => {
+      if (picked.size === show.length) show.forEach(i => picked.delete(i.id));
+      else show.forEach(i => picked.add(i.id));
+      haptic(); draw();
+    };
+    btnZip.onclick = () => sendZip([...picked], r.t);
     btnPhones.onclick = async () => {
       if (!picked.size) return;
       const ids = [...picked];
