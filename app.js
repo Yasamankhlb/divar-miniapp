@@ -8,6 +8,7 @@ const BOT = 'DivarMaava_bot';
 const $app = document.getElementById('app');
 const S = { deal: 'sell', ptype: 'any', districts: [], streets: [], areas: [], window: '1d', personal: true, min_price: '', max_price: '', min_area: '', max_area: '', repeat: 0 };
 let DIST = [];
+let ACCT = null;
 const fa = n => (n === null || n === undefined || n === '') ? '—' : String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function money(v) { if (v == null) return '—'; v = +v; if (v >= 1e9) return fa((v / 1e9).toFixed(2).replace(/\.?0+$/, '')) + ' میلیارد'; if (v >= 1e6) return fa(Math.round(v / 1e6).toLocaleString('en')) + ' میلیون'; return fa(v.toLocaleString('en')); }
@@ -60,7 +61,9 @@ function seg(key, opts) {
 function Search() {
   const types = { any: 'همه', apartment: '🏢 آپارتمان', villa: '🏡 ویلا/خانه', land: '🌱 زمین/کلنگی', commercial: '🏬 تجاری/اداری', building: '🏗 ساختمان کامل' };
   const priceLbl = S.deal === 'sell' ? 'قیمت (تومان)' : 'ودیعه (تومان)';
-  $app.innerHTML = `<div class="hdr"><h1>${S.editOf ? `✏️ ویرایش کار #${fa(S.editOf)}` : '🔎 جستجوی آگهی ملک'}</h1></div>
+  const acct = ACCT === '1' ? '<div class="acct ok">✅ حساب دیوار وصل است</div>'
+    : ACCT === '0' ? '<div class="acct no">🔑 حساب دیوار وصل نیست — در چت «🔑 حساب دیوار» را بزنید</div>' : '';
+  $app.innerHTML = `<div class="hdr"><h1>${S.editOf ? `✏️ ویرایش کار #${fa(S.editOf)}` : '🔎 جستجوی آگهی ملک'}</h1>${acct}</div>
   <div class="sec"><h3>نوع معامله</h3>${seg('deal', { sell: '🏷 فروش', rent: '🔑 اجاره', mortgage: '💰 رهن' })}</div>
   <div class="sec"><h3>نوع ملک</h3>${seg('ptype', types)}</div>
   <div class="sec"><h3>محله / خیابان</h3>
@@ -365,6 +368,7 @@ function prefill(p) {
 (async function boot() {
   if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('secondary_bg_color') } catch (e) { } }
   const h = new URLSearchParams(location.hash.slice(1)), qs = new URLSearchParams(location.search);
+  ACCT = h.get('acct');  // the bot's keyboard link says whether the Divar account is connected
   const data = h.get('data') || qs.get('data') || (h.get('edit') ? '' : sessionStorage.getItem('dy_data') || '');
   if (data) { try { sessionStorage.setItem('dy_data', data) } catch (e) { } return Results(data); }
   try { DIST = await (await fetch('districts.json?v=3')).json(); } catch (e) { DIST = [[522, 'ارم', ''], [515, 'قصرالدشت', '']]; }
